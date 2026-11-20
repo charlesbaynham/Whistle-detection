@@ -1,0 +1,20 @@
+[project]
+name = "whistle-lab"
+version = "0.1.0"
+description = "Record whistles from a phone, view spectrograms, store labelled datasets"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+whistle-lab = "whistle_lab.app:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27", "numpy>=1.26"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
