@@ -43,6 +43,12 @@ def _paths(dataset: str, rec_id: str) -> tuple[Path, Path]:
 app = FastAPI(title="whistle-lab")
 
 
+@app.get("/health")
+def health():
+    data_dir()
+    return {"status": "ok"}
+
+
 @app.get("/api/datasets")
 def list_datasets():
     return sorted(p.name for p in data_dir().iterdir() if p.is_dir())
