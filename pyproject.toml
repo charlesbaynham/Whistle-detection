@@ -13,6 +13,12 @@ dependencies = [
 whistle-lab = "whistle_lab.app:main"
 
 [dependency-groups]
+analysis = [
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.2",
+    "numpy>=2.4.6",
+    "scipy>=1.17.1",
+]
 dev = ["pytest>=8", "httpx>=0.27", "numpy>=1.26"]
 
 [build-system]

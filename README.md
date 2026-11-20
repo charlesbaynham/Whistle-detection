@@ -40,6 +40,18 @@ recs = [(json.loads(p.read_text()), *wavfile.read(p.with_suffix(".wav")))
         for p in pathlib.Path("data/mydataset").glob("*.json")]   # (meta, sr, x)
 ```
 
+## Analysis notebooks
+
+`notebooks/` holds the detection prototypes. Put recordings in `data/<dataset>/` (gitignored;
+pull them off the server) and run:
+
+```sh
+uv run --group analysis jupyter lab notebooks/
+```
+
+- `01_note_sequence_detector.ipynb`: per-frame tonal gate (device) → notes → events, then
+  transposition-invariant interval matching against templates (server).
+
 ## API
 
 | | |
