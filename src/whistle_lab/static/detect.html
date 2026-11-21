@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whistle-lab · detector</title>
+<style>
+  :root { color-scheme: dark; --bg:#111; --fg:#ddd; --mut:#888; --acc:#3a7; --bad:#c44; --warn:#c93; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:12px; background:var(--bg); color:var(--fg);
+         font: 15px/1.4 system-ui, sans-serif; max-width: 900px; margin-inline:auto; }
+  h1 { font-size: 18px; margin: 0 0 10px; }
+  h2 { font-size: 15px; margin: 16px 0 6px; color: var(--mut); font-weight: 600; }
+  a { color: var(--acc); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  label { color:var(--mut); font-size:13px; }
+  input[type=text] { background:#222; color:var(--fg); border:1px solid #333; border-radius:6px;
+                     padding:8px; font-size:15px; flex:1; min-width:120px; }
+  button { background:#2a2a2a; color:var(--fg); border:1px solid #444; border-radius:8px;
+           padding:10px 14px; font-size:15px; }
+  button:disabled { opacity:.4; }
+  #rec { width:100%; padding:22px; font-size:22px; background:var(--acc); border:none; color:#fff; }
+  #rec.on { background:var(--bad); }
+  canvas { width:100%; background:#000; border-radius:6px; display:block; }
+  #status { color:var(--mut); font-size:13px; min-height:1.4em; }
+  #verdict { font-size: 28px; font-weight: 700; padding: 14px; border-radius: 8px; text-align: center;
+             margin: 10px 0; background: #1a1a1a; }
+  #verdict.yes { background: #17331f; color: #6e6; }
+  #verdict.no { color: var(--mut); }
+  #verdict small { display:block; font-size: 13px; font-weight: 400; color: var(--mut); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { padding:5px 4px; border-bottom:1px solid #222; text-align:left; }
+  th { color: var(--mut); font-weight: 500; font-size: 13px; }
+  td.n { text-align:right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bar { height: 8px; background: #333; border-radius: 4px; position: relative; min-width: 80px; }
+  .bar i { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background: var(--mut); }
+  .bar i.pass { background: var(--acc); }
+  .bar b { position:absolute; top:-3px; bottom:-3px; width:2px; background: var(--warn); }
+  .mut { color: var(--mut); font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>whistle-lab · detector <a href="./" style="font-size:14px;margin-left:10px">← recorder</a></h1>
+
+<div class="row">
+  <label for="tplds">patterns from dataset</label><input id="tplds" type="text" value="default">
+</div>
+<div id="templates" class="mut"></div>
+
+<button id="rec" style="margin-top:10px">● Listen</button>
+<div id="status"></div>
+
+<div id="verdict" class="no">—<small>record a whistle, then stop</small></div>
+
+<canvas id="spec" height="300"></canvas>
+<div class="mut" style="margin-top:4px">Lines: best track per pattern (solid = winner, dashed = others).</div>
+
+<h2>Candidates</h2>
+<table id="cands"></table>
+
+<h2>Performance</h2>
+<table id="metrics"></table>
+
+<h2>Keep this clip</h2>
+<div class="row">
+  <audio id="player" controls style="flex:1; min-width:200px"></audio>
+</div>
+<div class="row">
+  <label for="saveds">dataset</label><input id="saveds" type="text" value="detect-tests">
+</div>
+<div class="row">
+  <label for="savelabel">label</label><input id="savelabel" type="text" placeholder="true label">
+  <button id="save" disabled>Save</button>
+</div>
+
+<script src="common.js"></script>
+<script src="detect.js"></script>
+</body>
+</html>

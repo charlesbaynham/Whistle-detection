@@ -153,6 +153,7 @@ def viterbi(s, steps_st, min_frames=6, tol_st=1.5, drift=1, drift_cost=3.0, step
                     break
             return np.array(pts[::-1]).T
         out.path = path
+    out.n_states, out.n_transitions = NS, int((cand != NEG).sum())
     return out
 
 

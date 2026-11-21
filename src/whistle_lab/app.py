@@ -6,6 +6,7 @@ Storage layout (plain files, easy to glob from numpy/scipy later):
     $WHISTLE_DATA_DIR/<dataset>/<id>.json   # label, notes, sample rate, timestamps, ...
 """
 
+import io
 import json
 import os
 import re
@@ -17,6 +18,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+import numpy as np
+from scipy.io import wavfile
+
+from . import detect as det
 
 STATIC = Path(__file__).parent / "static"
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -133,6 +138,40 @@ def delete(dataset: str, rec_id: str):
         raise HTTPException(404)
     wav_path.unlink(missing_ok=True)
     meta_path.unlink()
+
+
+MAX_DETECT_S = 60
+
+
+def _templates(dataset: str):
+    d = data_dir() / _check_name(dataset, "dataset")
+    if not d.is_dir():
+        raise HTTPException(404, f"no dataset {dataset}")
+    return det.templates(d)
+
+
+@app.get("/api/templates")
+def get_templates(dataset: str = "default"):
+    return [dict(label=k, steps=v["steps"].round(2).tolist(), durations=v["durations"].round(3).tolist(),
+                 n_examples=v["n_examples"]) for k, v in _templates(dataset).items()]
+
+
+@app.post("/api/detect")
+async def detect(audio: UploadFile = File(...), dataset: str = Form("default")):
+    tpls = _templates(dataset)
+    if not tpls:
+        raise HTTPException(409, f"dataset {dataset} has no patterns yet (need >=2 clean examples per label)")
+    try:
+        sr, x = wavfile.read(io.BytesIO(await audio.read()))
+    except ValueError as e:
+        raise HTTPException(400, f"not a valid WAV: {e}")
+    if x.ndim > 1:
+        x = x.mean(axis=1)
+    if x.dtype.kind == "i":
+        x = x / float(-np.iinfo(x.dtype).min)
+    if not 0.2 < len(x) / sr <= MAX_DETECT_S:
+        raise HTTPException(400, f"clip must be 0.2–{MAX_DETECT_S} s")
+    return det.detect(x, sr, tpls)
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

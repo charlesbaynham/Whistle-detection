@@ -55,3 +55,40 @@ def test_serves_ui(client):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def tune_wav(freqs, sr=48000, note_s=0.35, seed=0):
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(sr * note_s)) / sr
+    env = np.minimum(1, np.minimum(t, t[::-1]) / 0.02)
+    silence = np.zeros(int(0.4 * sr))
+    notes = [0.3 * env * np.sin(2 * np.pi * f * t + 0.3 * np.sin(2 * np.pi * 4 * t)) for f in freqs]
+    x = np.concatenate([silence, *notes, silence]) + 1e-3 * rng.standard_normal(len(silence) * 2 + len(t) * len(freqs))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes((x * 32767).astype("<i2").tobytes())
+    return buf.getvalue()
+
+
+UP, DOWN = [1000, 1700, 1350], [1700, 1350, 1000]
+
+
+def test_detect(client):
+    assert client.post("/api/detect", files={"audio": ("a.wav", tune_wav(UP))},
+                       data={"dataset": "pats"}).status_code == 404
+    for i, (label, f) in enumerate([("up", UP), ("up", UP), ("down", DOWN), ("down", DOWN), ("noise", [])]):
+        jitter = 1 + 0.03 * i
+        client.post("/api/recordings", files={"audio": ("a.wav", tune_wav([x * jitter for x in f], seed=i))},
+                    data={"dataset": "pats", "label": label})
+    assert {t["label"] for t in client.get("/api/templates?dataset=pats").json()} == {"up", "down"}
+
+    def detect(wav):
+        r = client.post("/api/detect", files={"audio": ("a.wav", wav)}, data={"dataset": "pats"})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    hit = detect(tune_wav([x * 1.12 for x in DOWN], seed=9))  # transposed by ~2 semitones
+    assert hit["detected"] and hit["label"] == "down"
+    assert hit["metrics"]["real_time_factor"] < 1 and hit["metrics"]["hmm_states"] > 0
+    assert not detect(tune_wav([], seed=10))["detected"]

@@ -1,8 +1,21 @@
 # whistle-lab
 
-Phone-based recorder for prototyping whistle detection. Press Record, whistle, press Stop:
+Phone-based recorder and detector for prototyping whistle detection. Press Record, whistle, press Stop:
 you get a spectrogram (plus an optional per-frame peak-frequency track), can play it back,
 label it, and save it to a dataset on the server.
+
+## Detector page
+
+`/detect.html`: press Listen, whistle, press Stop. The clip is sent to `POST /api/detect`, which runs
+the Viterbi track search from notebook 02 against pattern templates built on the fly from a dataset:
+any label with at least two recordings that yield a clean ≥3-note event becomes a pattern (so
+background/speech labels are ignored automatically). The page shows the verdict, each pattern's
+best track over the spectrogram, ρ̂ against the threshold, χ², and compute metrics (per-stage
+timings, real-time factor, HMM size, and an estimated ops/s for running it on an ESP32). Clips can
+be saved to a dataset (default `detect-tests`) with their true label.
+
+Threshold: `WHISTLE_DETECT_THRESHOLD` (default 90, just above the loudest trigger in 30 min of
+surrogate background in notebook 02 — provisional until there is real background audio).
 
 ## Run
 
@@ -62,3 +75,5 @@ uv run --group analysis jupyter lab notebooks/
 | `GET /api/recordings/{dataset}/{id}.wav` | audio |
 | `PATCH /api/recordings/{dataset}/{id}` | JSON `{label?, notes?}` |
 | `DELETE /api/recordings/{dataset}/{id}` | |
+| `GET /api/templates[?dataset=default]` | patterns derived from the dataset |
+| `POST /api/detect` | multipart: `audio` (WAV), `dataset` (templates) → verdict, candidates, metrics |

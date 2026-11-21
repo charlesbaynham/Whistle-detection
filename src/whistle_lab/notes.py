@@ -1,6 +1,7 @@
-"""Note-sequence whistle detector: device gate (per-frame features -> notes -> events) and server match.
+"""v1 note-sequence detector: per-frame tonal gate -> notes -> events, then interval matching.
 
-Current working version; notebook 01 holds the original inline snapshot.
+Also used to extract pattern templates (note steps, durations) from labelled recordings.
+Notebook 01 holds the original inline snapshot.
 """
 import json
 import pathlib
