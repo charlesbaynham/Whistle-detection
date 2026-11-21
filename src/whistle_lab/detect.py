@@ -6,13 +6,17 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import find_peaks, resample_poly
 
 from . import notes, search
 
 CHI0 = 0.1
 # Loudest trigger in 30 min of surrogate background in notebook 02 was ρ̂ ≈ 88.
 THRESHOLD = float(os.environ.get("WHISTLE_DETECT_THRESHOLD", "90"))
+# Path vetoes, per note (notebook 03). Real true patterns: steadiness >= 0.82, off_path <= 0.08, step error
+# <= 2.0 st; synthetic ones off_path <= 0.22, step error <= 1.9 st.
+MIN_STEADINESS, MAX_OFF_PATH, MAX_STEP_ERROR_ST = 0.75, 0.3, 2.5
+PEAKS_CHECKED, PEAK_SEP_S = 3, 1.0
 FFT_FLOPS = 5 * search.NFFT * np.log2(search.NFFT)  # radix-2 complex FFT, standard estimate
 ESP32_HZ = 240e6
 
@@ -52,6 +56,41 @@ def templates(dataset_dir: Path):
     return out
 
 
+def _candidate(label, tp, tr, rw, s, b):
+    fr, cells, ks = tr.path(b)
+    steadiness, off_path, step_error = search.consistency(s, fr, cells, ks, tp["steps"])
+    veto = ("pitch glides within a note" if steadiness < MIN_STEADINESS else
+            "skips notes the whistler played" if off_path > MAX_OFF_PATH else
+            "intervals don't match" if step_error > MAX_STEP_ERROR_ST else None)
+    return dict(
+        label=label,
+        rho=_num(rw[b]),
+        score=_num(tr.score[b]),
+        chi2=_num(tr.chisq()[b]),
+        steadiness=steadiness,
+        off_path=off_path,
+        step_error=step_error,
+        veto=veto,
+        t_start=float(fr[0] * search.DT + search.NFFT / 2 / search.FS),
+        t_end=float(fr[-1] * search.DT + search.NFFT / 2 / search.FS),
+        notes_hz=[_num(np.median(search.GRID_HZ[cells[ks == k]])) if (ks == k).any() else None
+                  for k in range(len(tp["steps"]) + 1)],
+        track=[[round(float(a * search.DT + search.NFFT / 2 / search.FS), 3), round(float(search.GRID_HZ[c]), 1)]
+               for a, c in zip(fr, cells)],
+        n_states=tr.n_states,
+    )
+
+
+def _best_candidate(label, tp, tr, rw, s):
+    """Strongest unvetoed track among the top few peaks of ρ̂, else the strongest track with its veto."""
+    finite = np.nan_to_num(rw, nan=-np.inf, neginf=-1e9)
+    pk, _ = find_peaks(np.r_[-np.inf, finite, -np.inf], distance=max(1, int(PEAK_SEP_S / search.DT)))
+    pk = pk - 1
+    top = pk[np.argsort(finite[pk])[::-1][:PEAKS_CHECKED]] if len(pk) else [int(np.argmax(finite))]
+    cands = [_candidate(label, tp, tr, rw, s, int(b)) for b in top]
+    return next((c for c in cands if c["veto"] is None), cands[0])
+
+
 def detect(x: np.ndarray, sr: int, tpls: dict, threshold: float = THRESHOLD):
     timings = {}
     t = time.perf_counter()
@@ -70,23 +109,10 @@ def detect(x: np.ndarray, sr: int, tpls: dict, threshold: float = THRESHOLD):
         timings[f"viterbi: {label}"] = time.perf_counter() - t
         transitions += tr.n_transitions
         rw = tr.reweighted(CHI0)
-        b = int(np.argmax(rw))
-        fr, cells, ks = tr.path(b)
-        results.append(dict(
-            label=label,
-            rho=_num(rw[b]),
-            score=_num(tr.score[b]),
-            chi2=_num(tr.chisq()[b]),
-            t_start=float(fr[0] * search.DT + search.NFFT / 2 / search.FS),
-            t_end=float(fr[-1] * search.DT + search.NFFT / 2 / search.FS),
-            notes_hz=[_num(np.median(search.GRID_HZ[cells[ks == k]])) if (ks == k).any() else None
-                      for k in range(len(tp["steps"]) + 1)],
-            track=[[round(float(a * search.DT + search.NFFT / 2 / search.FS), 3), round(float(search.GRID_HZ[c]), 1)]
-                   for a, c in zip(fr, cells)],
-            n_states=tr.n_states,
-        ))
-    results.sort(key=lambda r: -np.inf if r["rho"] is None else r["rho"], reverse=True)
-    best = results[0] if results and results[0]["rho"] is not None else None
+        results.append(_best_candidate(label, tp, tr, rw, s))
+
+    results.sort(key=lambda r: (r["veto"] is None, -np.inf if r["rho"] is None else r["rho"]), reverse=True)
+    best = results[0] if results and results[0]["rho"] is not None and results[0]["veto"] is None else None
 
     duration = len(x) / sr
     total = sum(timings.values())

@@ -203,6 +203,25 @@ def bank(s, steps_st, durations_s, chi0, scales=np.geomspace(0.5, 2, 11), track_
     return out
 
 
+def consistency(s, frames, cells, notes, steps_st, near_st=0.75, off_st=1.0, tonal=2.0):
+    """Signal-based vetoes on one track (notebook 03), per note so a short phantom note can't hide.
+    steadiness: worst note's fraction of frames within near_st of its median pitch; the HMM's per-frame
+    drift otherwise lets a "note" glide along any melody. off_path: worst note's fraction of frames whose
+    loudest tonal pixel is more than off_st away, i.e. the whistler was on a note the track skipped.
+    step_error: largest |median-to-median step - template step| in semitones."""
+    steadiness, off_path, medians = 1.0, 0.0, []
+    jm = s[frames].argmax(1)
+    loud_elsewhere = (s[frames, jm] > tonal) & (np.abs(jm - cells) > off_st * CELLS_PER_ST)
+    for k in range(len(steps_st) + 1):
+        m = notes == k
+        med = np.median(cells[m])
+        medians.append(med)
+        steadiness = min(steadiness, float((np.abs(cells[m] - med) <= near_st * CELLS_PER_ST).mean()))
+        off_path = max(off_path, float(loud_elsewhere[m].mean()))
+    step_error = float(np.abs(np.diff(medians) / CELLS_PER_ST - np.asarray(steps_st)).max())
+    return steadiness, off_path, step_error
+
+
 def search(s, runners, chi0):
     """runners: {pattern: s -> Track}. Returns (ranking statistic, best-pattern index, Tracks)."""
     tracks = [run(s) for run in runners.values()]
