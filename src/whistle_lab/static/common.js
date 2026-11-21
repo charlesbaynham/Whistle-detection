@@ -2,6 +2,14 @@
 // Shared by the recorder (index.html) and the detector (detect.html).
 const $ = (id) => document.getElementById(id);
 
+// Footer with the deployed commit hash, so a redeploy is visible.
+fetch("api/version").then((r) => r.json()).then(({ version }) => {
+  const f = document.createElement("footer");
+  f.textContent = "build " + version;
+  f.style.cssText = "margin-top:24px;color:#888;font-size:12px;text-align:center";
+  document.body.appendChild(f);
+}).catch(() => {});
+
 // ---------- mic capture ----------
 async function startMic() {
   const stream = await navigator.mediaDevices.getUserMedia({

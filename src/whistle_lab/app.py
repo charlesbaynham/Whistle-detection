@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import uuid
 import wave
 from datetime import datetime, timezone
@@ -45,7 +46,25 @@ def _paths(dataset: str, rec_id: str) -> tuple[Path, Path]:
     return d / f"{rec_id}.wav", d / f"{rec_id}.json"
 
 
+def _version() -> str:
+    """Short commit hash: baked into the image as WHISTLE_VERSION, else read from git, else 'dev'."""
+    if v := os.environ.get("WHISTLE_VERSION"):
+        return v[:7]
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=STATIC, capture_output=True, text=True)
+        return r.stdout.strip() or "dev" if r.returncode == 0 else "dev"
+    except OSError:
+        return "dev"
+
+
+VERSION = _version()
+
 app = FastAPI(title="whistle-lab")
+
+
+@app.get("/api/version")
+def version():
+    return {"version": VERSION}
 
 
 @app.get("/health")
