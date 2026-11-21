@@ -19,10 +19,25 @@ async function startMic() {
   node.port.onmessage = (e) => chunks.push(e.data);
   src.connect(node).connect(ctx.destination); // node outputs silence; connection keeps it pulled
   src.connect(analyser);
-  const settings = stream.getAudioTracks()[0].getSettings();
+  const track = stream.getAudioTracks()[0];
+  const settings = track.getSettings();
+  // Phones mute the mic when the screen locks: the worklet keeps running and records zeros. Keep the screen
+  // on (the lock is dropped whenever the tab is hidden, so take it again on return) and flag any mute.
+  let lock = null, done = false;
+  const wake = async () => {
+    if (!done && document.visibilityState === "visible" && navigator.wakeLock)
+      lock = await navigator.wakeLock.request("screen").catch(() => null);
+  };
+  document.addEventListener("visibilitychange", wake);
+  await wake();
+  settings.wakeLock = !!lock;
+  track.onmute = () => { settings.mutedDuringRecording = true; };
   return {
     analyser, sr: ctx.sampleRate, settings, t0: performance.now(),
     async finish() {
+      done = true;
+      document.removeEventListener("visibilitychange", wake);
+      if (lock) lock.release().catch(() => {});
       stream.getTracks().forEach((t) => t.stop());
       await ctx.close();
       const n = chunks.reduce((a, c) => a + c.length, 0);
