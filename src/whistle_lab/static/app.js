@@ -43,7 +43,8 @@ async function stopRec() {
   current = { ...rec, unsaved: true };
   let pk = 0;
   for (const x of rec.samples) pk = Math.max(pk, Math.abs(x));
-  status(`${(rec.samples.length / rec.sr).toFixed(2)} s @ ${rec.sr} Hz, peak ${(20 * Math.log10(pk + 1e-12)).toFixed(1)} dBFS`);
+  status(`${(rec.samples.length / rec.sr).toFixed(2)} s @ ${rec.sr} Hz, peak ${(20 * Math.log10(pk + 1e-12)).toFixed(1)} dBFS` +
+    (rec.settings.mutedDuringRecording ? " ⚠ mic was muted (screen locked?): part of this is silence" : ""));
   setPlayer($("player"), rec.samples, rec.sr);
   redraw();
   setSaveEnabled(true);
