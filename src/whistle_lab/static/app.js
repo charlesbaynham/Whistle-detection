@@ -81,6 +81,7 @@ $("discard").onclick = () => {
 // ---------- recordings list ----------
 async function refreshList() {
   const ds = $("dataset").value.trim();
+  showPatterns($("patterns"), ds);
   const r = await fetch("api/recordings" + (ds ? "?dataset=" + encodeURIComponent(ds) : ""));
   const recs = r.ok ? await r.json() : [];
   $("count").textContent = `(${recs.length} in ${ds || "all"})`;

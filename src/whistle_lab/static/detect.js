@@ -8,15 +8,7 @@ let mic = null, clip = null;
 
 persistInputs(["tplds", "saveds"], "wl.det.", (id) => id === "tplds" && loadTemplates());
 
-async function loadTemplates() {
-  const ds = $("tplds").value.trim() || "default";
-  const r = await fetch("api/templates?dataset=" + encodeURIComponent(ds));
-  if (!r.ok) { $("templates").textContent = "No such dataset."; return; }
-  const t = await r.json();
-  $("templates").textContent = t.length
-    ? t.map((p) => `${p.label}: steps ${p.steps.map((s) => (s > 0 ? "+" : "") + s.toFixed(1)).join(", ")} st (${p.n_examples} examples)`).join(" · ")
-    : "No patterns yet: record ≥2 clean examples per label on the recorder page.";
-}
+const loadTemplates = () => showPatterns($("templates"), $("tplds").value.trim());
 
 $("rec").onclick = () => (mic ? stop() : start());
 

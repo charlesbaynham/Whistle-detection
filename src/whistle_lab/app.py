@@ -172,7 +172,8 @@ def _templates(dataset: str):
 @app.get("/api/templates")
 def get_templates(dataset: str = "default"):
     return [dict(label=k, steps=v["steps"].round(2).tolist(), durations=v["durations"].round(3).tolist(),
-                 n_examples=v["n_examples"]) for k, v in _templates(dataset).items()]
+                 onsets=v["onsets"].round(3).tolist(), f0_hz=round(v["f0_hz"], 1), n_examples=v["n_examples"])
+            for k, v in _templates(dataset).items()]
 
 
 @app.post("/api/detect")

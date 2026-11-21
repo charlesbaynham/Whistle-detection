@@ -48,6 +48,8 @@ def templates(dataset_dir: Path):
         out[label] = dict(
             steps=np.median([notes.intervals(ev) for ev in evs], axis=0),
             durations=np.median([[n.dur for n in ev] for ev in evs], axis=0),
+            onsets=np.median([[n.start - ev[0].start for n in ev] for ev in evs], axis=0),
+            f0_hz=float(np.median([ev[0].freq for ev in evs])),
             n_examples=len(evs),
         )
     _cache.clear()

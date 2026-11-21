@@ -251,3 +251,49 @@ function persistInputs(ids, prefix, onChange) {
     });
   }
 }
+
+// Synthesised reminder of a pattern: median pitch, intervals, onsets and durations of its examples.
+let audioCtx = null;
+function playPattern(p) {
+  audioCtx ??= new AudioContext();
+  const ctx = audioCtx, t0 = ctx.currentTime + 0.05, glide = 0.03, edge = 0.015;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  const vib = ctx.createOscillator(), vibDepth = ctx.createGain();
+  vib.frequency.value = 5;
+  vib.connect(vibDepth).connect(osc.detune);
+  vibDepth.gain.value = 12;
+  osc.type = "sine";
+  osc.connect(gain).connect(ctx.destination);
+  gain.gain.setValueAtTime(0, t0);
+  let f = p.f0_hz;
+  osc.frequency.setValueAtTime(f, t0);
+  p.durations.forEach((d, k) => {
+    const on = t0 + p.onsets[k], next = p.onsets[k + 1];
+    if (k) {
+      osc.frequency.setValueAtTime(f, on);
+      osc.frequency.exponentialRampToValueAtTime((f *= 2 ** (p.steps[k - 1] / 12)), on + glide);
+    }
+    gain.gain.setTargetAtTime(0.3, on, edge);
+    if (next === undefined || next - p.onsets[k] - d > 0.06) gain.gain.setTargetAtTime(0, on + d, edge);
+  });
+  const end = t0 + p.onsets.at(-1) + p.durations.at(-1) + 0.2;
+  [osc, vib].forEach((o) => { o.start(t0); o.stop(end); });
+}
+
+async function showPatterns(el, dataset) {
+  const r = await fetch("api/templates?dataset=" + encodeURIComponent(dataset || "default"));
+  const t = r.ok ? await r.json() : [];
+  el.replaceChildren();
+  if (!r.ok) { el.textContent = "No such dataset."; return; }
+  if (!t.length) { el.textContent = "No patterns yet: record ≥2 clean examples per label on the recorder page."; return; }
+  for (const p of t) {
+    const b = document.createElement("button");
+    b.className = "pat";
+    b.textContent = `▶ ${p.label}`;
+    b.title = `steps ${p.steps.map((s) => (s > 0 ? "+" : "") + s.toFixed(1)).join(", ")} st from ${p.f0_hz.toFixed(0)} Hz (${p.n_examples} examples)`;
+    b.onclick = () => playPattern(p);
+    const s = document.createElement("span");
+    s.textContent = ` ${p.steps.map((s) => (s > 0 ? "+" : "") + s.toFixed(1)).join(", ")} st (${p.n_examples} ex.) `;
+    el.append(b, s);
+  }
+}

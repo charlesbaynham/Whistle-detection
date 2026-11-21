@@ -27,6 +27,10 @@ trigger above ρ̂ 174; true patterns 398–2348 quiet, 511–1129 over TV (11/1
 3-note patterns gave ~21 false triggers/h on the same TV audio at the old default of 90: a 3-note
 template is too easily matched by music.
 
+Both pages list the patterns with a ▶ button that plays a synthesised reminder: the median first-note
+pitch, intervals, onsets and durations of the pattern's examples, as a sine with slight vibrato and
+30 ms slides between notes. Each reminder is detected as its own pattern (checked by rendering it offline).
+
 Long clips: the search checks only the top 3 ρ̂ peaks per pattern, so test long background
 recordings in windows (as a device would), not as one clip.
 
@@ -92,5 +96,5 @@ uv run --group analysis jupyter lab notebooks/
 | `GET /api/recordings/{dataset}/{id}.wav` | audio |
 | `PATCH /api/recordings/{dataset}/{id}` | JSON `{label?, notes?}` |
 | `DELETE /api/recordings/{dataset}/{id}` | |
-| `GET /api/templates[?dataset=default]` | patterns derived from the dataset |
+| `GET /api/templates[?dataset=default]` | patterns derived from the dataset (steps, durations, onsets, `f0_hz`) |
 | `POST /api/detect` | multipart: `audio` (WAV), `dataset` (templates) → verdict, candidates, metrics |
