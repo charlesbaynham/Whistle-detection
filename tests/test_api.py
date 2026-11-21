@@ -53,6 +53,11 @@ def test_serves_ui(client):
     assert "whistle-lab" in client.get("/").text
 
 
+def test_version(client, monkeypatch):
+    v = client.get("/api/version").json()["version"]
+    assert v and len(v) <= 7
+
+
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
 

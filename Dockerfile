@@ -9,6 +9,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
+ARG GIT_SHA=dev
+ENV WHISTLE_VERSION=$GIT_SHA
 RUN uv sync --frozen --no-dev
 
 # uid is fixed because the host's state volume is chowned to it (homelab-infra whistle/whistle.nix).

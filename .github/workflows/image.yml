@@ -36,6 +36,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name == 'push' }}
+          build-args: GIT_SHA=${{ github.sha }}
           tags: ghcr.io/charlesbaynham/whistle-detection:main
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
