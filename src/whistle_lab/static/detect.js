@@ -66,9 +66,9 @@ async function stop() {
 function showVerdict(res) {
   const v = $("verdict"), best = res.candidates[0];
   v.className = res.detected ? "yes" : "no";
-  const sub = best && best.rho !== null
-    ? `best: ${best.label}, ρ̂ = ${best.rho.toFixed(0)} (threshold ${res.threshold})`
-    : "no completed track";
+  const sub = !best || best.rho === null ? "no completed track"
+    : best.veto ? `${best.label} vetoed: ${best.veto} (ρ̂ = ${best.rho.toFixed(0)})`
+    : `best: ${best.label}, ρ̂ = ${best.rho.toFixed(0)} (threshold ${res.threshold})`;
   v.innerHTML = (res.detected ? `✓ ${res.label}` : "No signal") + `<small>${sub}</small>`;
 }
 
@@ -88,20 +88,24 @@ function drawTracks(toXY, res) {
 
 function showCandidates(res) {
   const t = $("cands");
-  t.innerHTML = "<tr><th></th><th>pattern</th><th>ρ̂ vs threshold</th><th class=n>ρ̂</th><th class=n>χ²</th><th>notes (Hz)</th><th class=n>span</th></tr>";
+  t.innerHTML = "<tr><th></th><th>pattern</th><th>ρ̂ vs threshold</th><th class=n>ρ̂</th><th class=n>χ²</th><th class=n>steady</th><th class=n>off-path</th><th class=n>step err</th><th>notes (Hz)</th><th class=n>span</th><th>veto</th></tr>";
   const top = Math.max(res.threshold * 1.5, ...res.candidates.map((c) => c.rho ?? 0));
   res.candidates.forEach((c, i) => {
     const tr = t.insertRow();
     tr.insertCell().innerHTML = `<span style="color:${COLORS[i % COLORS.length]}">━</span>`;
     tr.insertCell().textContent = c.label;
     const w = Math.max(0, (c.rho ?? 0) / top) * 100, th = (res.threshold / top) * 100;
-    tr.insertCell().innerHTML = `<div class="bar"><i class="${(c.rho ?? -1) >= res.threshold ? "pass" : ""}" style="width:${w}%"></i><b style="left:${th}%"></b></div>`;
+    tr.insertCell().innerHTML = `<div class="bar"><i class="${(c.rho ?? -1) >= res.threshold && !c.veto ? "pass" : ""}" style="width:${w}%"></i><b style="left:${th}%"></b></div>`;
     const num = (v, d) => { const td = tr.insertCell(); td.className = "n"; td.textContent = v === null ? "—" : v.toFixed(d); };
     num(c.rho, 0);
     num(c.chi2, 2);
+    num(c.steadiness, 2);
+    num(c.off_path, 2);
+    num(c.step_error, 1);
     tr.insertCell().textContent = c.notes_hz.map((f) => (f === null ? "—" : f.toFixed(0))).join(" → ");
     const sp = tr.insertCell(); sp.className = "n";
     sp.textContent = c.rho === null ? "—" : `${c.t_start.toFixed(2)}–${c.t_end.toFixed(2)} s`;
+    tr.insertCell().textContent = c.veto ?? "";
   });
 }
 

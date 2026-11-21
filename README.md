@@ -14,6 +14,12 @@ best track over the spectrogram, ρ̂ against the threshold, χ², and compute m
 timings, real-time factor, HMM size, and an estimated ops/s for running it on an ESP32). Clips can
 be saved to a dataset (default `detect-tests`) with their true label.
 
+Each pattern's best tracks (top 3 ρ̂ peaks) must also pass three per-note path vetoes from
+notebook 03: steadiness ≥ 0.75 (frames within ±0.75 st of their note's median, so a track can't glide
+along an unrelated melody), off-path ≤ 0.3 (frames where the loudest tonal pixel is >1 st from the
+track, so it can't sit on one note while others are whistled) and step error ≤ 2.5 st (median-to-median
+intervals against the template). The page shows all three and any veto.
+
 Threshold: `WHISTLE_DETECT_THRESHOLD` (default 90, just above the loudest trigger in 30 min of
 surrogate background in notebook 02 — provisional until there is real background audio).
 
@@ -64,6 +70,10 @@ uv run --group analysis jupyter lab notebooks/
 
 - `01_note_sequence_detector.ipynb`: per-frame tonal gate (device) → notes → events, then
   transposition-invariant interval matching against templates (server).
+- `02_gw_style_search.ipynb`: whitened log-frequency spectrogram, Viterbi track search, template
+  bank, χ² re-weighting, surrogate background and injections.
+- `03_false_positive_vetoes.ipynb`: why random whistles and tunes triggered the detector
+  (`detect-tests`), the steadiness and off-path vetoes, and a synthetic check of both.
 
 ## API
 
