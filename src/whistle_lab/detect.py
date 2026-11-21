@@ -11,11 +11,10 @@ from scipy.signal import find_peaks, resample_poly
 from . import notes, search
 
 CHI0 = 0.1
-# Loudest trigger in 30 min of surrogate background in notebook 02 was ρ̂ ≈ 88.
-THRESHOLD = float(os.environ.get("WHISTLE_DETECT_THRESHOLD", "90"))
-# Path vetoes, per note (notebook 03). Real true patterns: steadiness >= 0.82, off_path <= 0.08, step error
-# <= 2.0 st; synthetic ones off_path <= 0.22, step error <= 1.9 st.
-MIN_STEADINESS, MAX_OFF_PATH, MAX_STEP_ERROR_ST = 0.75, 0.3, 2.5
+# 17 min of real TV audio against the 5-note patterns: loudest vetted trigger ρ̂ ≈ 174; true patterns >= 398.
+THRESHOLD = float(os.environ.get("WHISTLE_DETECT_THRESHOLD", "200"))
+# Path vetoes, per note (notebook 03, README). Steadiness 0.6 lets a scoop into the first note through.
+MIN_STEADINESS, MAX_OFF_PATH, MAX_STEP_ERROR_ST, MAX_STEP_RATIO = 0.6, 0.3, 2.5, 0.5
 PEAKS_CHECKED, PEAK_SEP_S = 3, 1.0
 FFT_FLOPS = 5 * search.NFFT * np.log2(search.NFFT)  # radix-2 complex FFT, standard estimate
 ESP32_HZ = 240e6
@@ -58,10 +57,10 @@ def templates(dataset_dir: Path):
 
 def _candidate(label, tp, tr, rw, s, b):
     fr, cells, ks = tr.path(b)
-    steadiness, off_path, step_error = search.consistency(s, fr, cells, ks, tp["steps"])
+    steadiness, off_path, step_error, step_ratio = search.consistency(s, fr, cells, ks, tp["steps"])
     veto = ("pitch glides within a note" if steadiness < MIN_STEADINESS else
             "skips notes the whistler played" if off_path > MAX_OFF_PATH else
-            "intervals don't match" if step_error > MAX_STEP_ERROR_ST else None)
+            "intervals don't match" if step_error > MAX_STEP_ERROR_ST or step_ratio > MAX_STEP_RATIO else None)
     return dict(
         label=label,
         rho=_num(rw[b]),
@@ -70,6 +69,7 @@ def _candidate(label, tp, tr, rw, s, b):
         steadiness=steadiness,
         off_path=off_path,
         step_error=step_error,
+        step_ratio=step_ratio,
         veto=veto,
         t_start=float(fr[0] * search.DT + search.NFFT / 2 / search.FS),
         t_end=float(fr[-1] * search.DT + search.NFFT / 2 / search.FS),

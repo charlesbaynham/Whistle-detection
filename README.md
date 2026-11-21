@@ -14,14 +14,21 @@ best track over the spectrogram, ρ̂ against the threshold, χ², and compute m
 timings, real-time factor, HMM size, and an estimated ops/s for running it on an ESP32). Clips can
 be saved to a dataset (default `detect-tests`) with their true label.
 
-Each pattern's best tracks (top 3 ρ̂ peaks) must also pass three per-note path vetoes from
-notebook 03: steadiness ≥ 0.75 (frames within ±0.75 st of their note's median, so a track can't glide
-along an unrelated melody), off-path ≤ 0.3 (frames where the loudest tonal pixel is >1 st from the
-track, so it can't sit on one note while others are whistled) and step error ≤ 2.5 st (median-to-median
-intervals against the template). The page shows all three and any veto.
+Each pattern's best tracks (top 3 ρ̂ peaks) must also pass per-note path vetoes from notebook 03:
+steadiness ≥ 0.6 (frames within ±0.75 st of their note's median, so a track can't glide along an
+unrelated melody; a scoop into the first note is tolerated), off-path ≤ 0.3 (frames where the loudest
+tonal pixel is >1 st from the track, so it can't sit on one note while others are whistled) and step
+error ≤ 2.5 st and ≤ 50 % of each template step (median-to-median intervals; the relative limit stops
+a +2 st step being passed by a held note split in two). The page shows all of them and any veto.
 
-Threshold: `WHISTLE_DETECT_THRESHOLD` (default 90, just above the loudest trigger in 30 min of
-surrogate background in notebook 02 — provisional until there is real background audio).
+Threshold: `WHISTLE_DETECT_THRESHOLD` (default 200). Measured with the 5-note patterns (templates from
+12 quiet-room recordings) on 17 min of TV audio in 5 s sliding windows and 600 random 3–20 s chops: no
+trigger above ρ̂ 174; true patterns 398–2348 quiet, 511–1129 over TV (11/12 and 6/8 detected). The
+3-note patterns gave ~21 false triggers/h on the same TV audio at the old default of 90: a 3-note
+template is too easily matched by music.
+
+Long clips: the search checks only the top 3 ρ̂ peaks per pattern, so test long background
+recordings in windows (as a device would), not as one clip.
 
 ## Run
 
