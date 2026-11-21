@@ -126,10 +126,14 @@ function cmap(v) {
 }
 const cmapCss = (v) => { const [r, g, b] = cmap(v); return `rgb(${r|0},${g|0},${b|0})`; };
 
+const MAX_FRAMES = 8192;
+
 // Draws a spectrogram on canvas c; returns toXY(t_s, f_hz) -> canvas pixels, for overlays.
 function drawSpectrogram(c, x, sr, { nfft = 1024, fmax = 6000, range = 70, peak = false } = {}) {
   nfft = 1 << Math.round(Math.log2(Math.max(128, nfft)));
-  const hop = nfft / 4;
+  // One column per frame must fit a canvas (browsers cap width at ~32k px, Firefox returns no context past it)
+  // and memory: long recordings are overviewed with a coarser hop rather than all 4x-overlapped frames.
+  const hop = Math.max(nfft / 4, Math.ceil((x.length - nfft) / (MAX_FRAMES - 1)));
   fmax = Math.min(fmax || sr / 2, sr / 2);
   const { S, nf, nb } = stft(x, nfft, hop);
   const kmax = Math.min(nb - 1, Math.ceil((fmax * nfft) / sr));
