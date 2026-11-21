@@ -86,7 +86,11 @@ def test_detect(client):
         jitter = 1 + 0.03 * i
         client.post("/api/recordings", files={"audio": ("a.wav", tune_wav([x * jitter for x in f], seed=i))},
                     data={"dataset": "pats", "label": label})
-    assert {t["label"] for t in client.get("/api/templates?dataset=pats").json()} == {"up", "down"}
+    tpls = client.get("/api/templates?dataset=pats").json()
+    assert {t["label"] for t in tpls} == {"up", "down"}
+    for t in tpls:
+        assert len(t["onsets"]) == len(t["durations"]) == len(t["steps"]) + 1 and t["onsets"][0] == 0
+        assert 500 < t["f0_hz"] < 4000
 
     def detect(wav):
         r = client.post("/api/detect", files={"audio": ("a.wav", wav)}, data={"dataset": "pats"})

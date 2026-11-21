@@ -28,6 +28,8 @@
   tr.sel td { background:#1d2a22; }
   td.x { text-align:right; white-space:nowrap; }
   td button { padding:4px 8px; font-size:13px; }
+  button.pat { padding:6px 10px; font-size:14px; margin:2px 0; }
+  .mut { color: var(--mut); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -39,6 +41,7 @@
 <div class="row">
   <label for="label">label</label><input id="label" type="text" placeholder="e.g. high-low-high">
 </div>
+<div id="patterns" class="mut" style="margin-bottom:8px"></div>
 
 <button id="rec">● Record</button>
 <div id="status"></div>
