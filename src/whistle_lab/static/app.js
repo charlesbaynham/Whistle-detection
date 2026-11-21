@@ -41,13 +41,16 @@ async function stopRec() {
   $("rec").textContent = "● Record";
   $("rec").classList.remove("on");
   current = { ...rec, unsaved: true };
+  setSaveEnabled(true);  // before any rendering: a display failure must not make the recording unsavable
   let pk = 0;
   for (const x of rec.samples) pk = Math.max(pk, Math.abs(x));
-  status(`${(rec.samples.length / rec.sr).toFixed(2)} s @ ${rec.sr} Hz, peak ${(20 * Math.log10(pk + 1e-12)).toFixed(1)} dBFS` +
-    (rec.settings.mutedDuringRecording ? " ⚠ mic was muted (screen locked?): part of this is silence" : ""));
-  setPlayer($("player"), rec.samples, rec.sr);
-  redraw();
-  setSaveEnabled(true);
+  const summary = `${(rec.samples.length / rec.sr).toFixed(2)} s @ ${rec.sr} Hz, peak ${(20 * Math.log10(pk + 1e-12)).toFixed(1)} dBFS` +
+    (rec.settings.mutedDuringRecording ? " ⚠ mic was muted (screen locked?): part of this is silence" : "");
+  status(summary);
+  try {
+    setPlayer($("player"), rec.samples, rec.sr);
+    redraw();
+  } catch (e) { status(`${summary} — display failed: ${e.message}`); }
   highlight(null);
 }
 
