@@ -9,6 +9,9 @@ False-positive rejection is the priority.
 - `firmware/`: PlatformIO project for the M5Stack ATOM Echo (ESP32-PICO-D4, 4 MB flash, no PSRAM,
   PDM mic). See `firmware/README.md` for pins and build. Plan: most detection runs on the device,
   the server only re-checks candidates.
+- Home Assistant integration (planned, not built): MQTT over Wi-Fi. Device publishes detections;
+  HA sends back ok/error feedback, beep-to-identify, and add/delete-pattern commands.
+- Firmware updates: USB once, then ArduinoOTA over the LAN (HTTP pull OTA later for many nodes).
 
 ## Working here
 
