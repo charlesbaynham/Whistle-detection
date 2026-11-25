@@ -5,9 +5,6 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
 
 # Flashing the ATOM Echo
 
-Status: USB flash verified on hardware (Ubuntu); OTA is still written from docs. After the first
-real OTA flash, correct anything below that turned out wrong and delete this line.
-
 ## Where it can run
 
 - **Cloud session:** can build (`cd firmware && pio run`) but cannot reach the board (no USB, no LAN).
@@ -26,7 +23,8 @@ real OTA flash, correct anything below that turned out wrong and delete this lin
 - Linux USB access: user in `dialout` (or `uucp`). That is enough on Ubuntu; if the port is still
   refused, install PlatformIO's udev rules
   (`curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules | sudo tee /etc/udev/rules.d/99-platformio-udev.rules`).
-- Linux mDNS for `<hostname>.local`: avahi + nss-mdns. Otherwise use the IP.
+- Linux mDNS for `<hostname>.local`: avahi + nss-mdns. A Nix-installed PlatformIO can't use it
+  (see OTA below).
 
 ## New board: identify and back up (read-only)
 
@@ -69,7 +67,11 @@ pio device monitor -e atom-echo      # expect "whistle-fw: mic up", then "wifi u
 cd firmware
 pio run -e atom-echo-ota -t upload                       # targets <hostname>.local from secrets.ini
 pio run -e atom-echo-ota -t upload --upload-port 192.168.x.y   # if mDNS fails
+# Nix PlatformIO ("Host <hostname>.local Not Found"): resolve with the system's resolver instead
+pio run -e atom-echo-ota -t upload --upload-port "$(getent ahostsv4 whistle-echo.local | awk '{print $1; exit}')"
 ```
+
+Success is `Result: OK`; if USB is attached, the serial log shows `OTA start` and then a reboot.
 
 - The board must be running OTA-capable firmware with the same `ota_password`.
 - espota makes the device connect *back* to the host on a random TCP port: a host firewall blocking
