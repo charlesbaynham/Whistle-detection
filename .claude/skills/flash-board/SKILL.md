@@ -5,8 +5,8 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
 
 # Flashing the ATOM Echo
 
-Status: written from docs before first hardware flash. After the first real USB and OTA flash,
-correct anything below that turned out wrong and delete this line.
+Status: USB flash verified on hardware (Ubuntu); OTA is still written from docs. After the first
+real OTA flash, correct anything below that turned out wrong and delete this line.
 
 ## Where it can run
 
@@ -19,9 +19,32 @@ correct anything below that turned out wrong and delete this line.
 
 - `firmware/secrets.ini` exists (copy `secrets.ini.example`). If it's missing the build succeeds but
   Wi-Fi/OTA are compiled out, and the next update will need USB again. Check before a USB flash.
-- Linux USB access: user in `dialout` (or `uucp`), and PlatformIO's udev rules installed
+  It is gitignored, so a fresh worktree lacks it. On the user's laptop an encrypted copy is at
+  `~/whistle-echo-backup/secrets.ini.asc`, readable with the agent GPG key (`get_gpg_private_key`, via
+  the `house-absolute:fetching-secrets` skill; import into a temporary `--homedir`, then decrypt with
+  `--output firmware/secrets.ini`). Re-encrypt it to that key whenever `secrets.ini` changes.
+- Linux USB access: user in `dialout` (or `uucp`). That is enough on Ubuntu; if the port is still
+  refused, install PlatformIO's udev rules
   (`curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules | sudo tee /etc/udev/rules.d/99-platformio-udev.rules`).
 - Linux mDNS for `<hostname>.local`: avahi + nss-mdns. Otherwise use the IP.
+
+## New board: identify and back up (read-only)
+
+Run `pio run` first, which downloads esptool. The ATOM Echo's bridge enumerates as `0403:6001`
+"Hades2001 M5stack".
+
+```sh
+cd firmware
+# expect ESP32-PICO-D4, 4MB
+pio pkg exec -p tool-esptoolpy -- esptool.py --port /dev/ttyUSB0 flash_id
+# ~70 s; keep the backup outside the repo (it may hold credentials)
+pio pkg exec -p tool-esptoolpy -- esptool.py --port /dev/ttyUSB0 --baud 750000 read_flash 0 0x400000 <backup>.bin
+```
+
+Stock boards ship with ESPHome (`m5stack-atom-echo-wake-word-voice-assistant`), which starts an AP
+`m5stack-atom-echo-<mac>` until provisioned. Its partition table differs from ours, so erase before
+the first upload: `pio run -e atom-echo -t erase`. To restore, run the same esptool command with
+`write_flash 0 <backup>.bin`.
 
 ## USB (first flash, partition-table change, or recovery)
 
@@ -32,6 +55,8 @@ pio run -e atom-echo -t upload       # auto-detects the port; add --upload-port 
 pio device monitor -e atom-echo      # expect "whistle-fw: mic up", then "wifi up: <ip>, OTA at <host>.local"
 ```
 
+- `pio device monitor` is interactive. To capture a boot log from an agent session:
+  `uv run ../.claude/skills/flash-board/serial_log.py /dev/ttyUSB0 20`.
 - Upload speed is 750000; the ATOM's serial bridge fails above that. If it still fails, try
   `--upload-speed 115200` (edit `upload_speed` only if it's consistently needed).
 - If esptool can't enter the bootloader ("Wrong boot mode" / "Failed to connect"): unplug, hold G0
