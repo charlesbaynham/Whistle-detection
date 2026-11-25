@@ -25,6 +25,8 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
   (`curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules | sudo tee /etc/udev/rules.d/99-platformio-udev.rules`).
 - Linux mDNS for `<hostname>.local`: avahi + nss-mdns. A Nix-installed PlatformIO can't use it
   (see OTA below).
+- On the home LAN the board `whistle-echo` has a DHCP reservation (10.0.1.52, in the
+  `houseabsolute-openwrt` router config) and DNS name `whistle-echo.ha`. Give new boards one too.
 
 ## New board: identify and back up (read-only)
 
@@ -67,7 +69,9 @@ pio device monitor -e atom-echo      # expect "whistle-fw: mic up", then "wifi u
 cd firmware
 pio run -e atom-echo-ota -t upload                       # targets <hostname>.local from secrets.ini
 pio run -e atom-echo-ota -t upload --upload-port 192.168.x.y   # if mDNS fails
-# Nix PlatformIO ("Host <hostname>.local Not Found"): resolve with the system's resolver instead
+# Nix PlatformIO ("Host <hostname>.local Not Found"): on the home LAN use the router's DNS name
+pio run -e atom-echo-ota -t upload --upload-port whistle-echo.ha
+# ... elsewhere, resolve with the system's resolver
 pio run -e atom-echo-ota -t upload --upload-port "$(getent ahostsv4 whistle-echo.local | awk '{print $1; exit}')"
 ```
 
