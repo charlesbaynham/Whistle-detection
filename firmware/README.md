@@ -26,7 +26,7 @@ the clip is flagged `overrun`.
 
 ## Debug server
 
-`debug_server = host:port` in `secrets.ini` (empty: no uploads). The device POSTs:
+`debug_server = host:port` or `https://host` in `secrets.ini` (empty: no uploads; optional `device_token` is sent as `X-Whistle-Token` and must match the server's `WHISTLE_DEVICE_TOKEN` env var). The device POSTs:
 
 - `/api/device/trigger`: the WAV plus JSON (notes with start/dur/Hz/prominence/concentration,
   intervals, timings, heap, RSSI, firmware rev). The server saves it to dataset `device-triggers`,

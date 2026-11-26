@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <driver/i2s.h>
 #include <math.h>
 
@@ -97,16 +98,26 @@ bool mic_init() {
 // ---- network ----
 char server_host[64];
 uint16_t server_port = 80;
+bool server_tls = false;
+char host_hdr[80];  // Host header value: the port is left out when it is the scheme default
 
+// DEBUG_SERVER is host:port, http://host[:port] or https://host[:port] (TLS, port 443 by default).
 void parse_server() {
   const char* s = DEBUG_SERVER;
   if (!strncmp(s, "http://", 7)) s += 7;
+  else if (!strncmp(s, "https://", 8)) {
+    s += 8;
+    server_tls = true;
+    server_port = 443;
+  }
   strlcpy(server_host, s, sizeof(server_host));
   if (char* c = strchr(server_host, ':')) {
     *c = 0;
     server_port = atoi(c + 1);
   }
   if (char* c = strchr(server_host, '/')) *c = 0;
+  if (server_port == (server_tls ? 443 : 80)) strlcpy(host_hdr, server_host, sizeof host_hdr);
+  else snprintf(host_hdr, sizeof host_hdr, "%s:%u", server_host, unsigned(server_port));
 }
 
 void wav_header(uint8_t* h, uint32_t n) {
@@ -152,11 +163,22 @@ bool read_response(WiFiClient& c, String& head, String& body, uint32_t timeout_m
 // on failure.
 template <typename F>
 String http_post(const char* path, const char* content_type, size_t len, F send) {
-  WiFiClient c;
+  // Shared secret for the server's WHISTLE_DEVICE_TOKEN check; empty = none sent.
+  static const String token_header = sizeof(DEVICE_TOKEN) > 1 ? String("X-Whistle-Token: " DEVICE_TOKEN "\r\n") : String();
+  WiFiClientSecure tls;
+  WiFiClient plain;
+  // No certificate check: the server is on the LAN and the clips are not secret. TLS here is only to get past
+  // the reverse proxy, which redirects plain HTTP to HTTPS.
+  tls.setInsecure();
+  WiFiClient& c = server_tls ? static_cast<WiFiClient&>(tls) : plain;
   c.setTimeout(5);  // seconds, for socket sends
-  if (!c.connect(server_host, server_port, 3000)) return "";
-  c.printf("POST %s HTTP/1.1\r\nHost: %s:%u\r\nContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
-           path, server_host, server_port, content_type, unsigned(len));
+  const bool up = server_tls ? tls.connect(server_host, server_port, 8000) : plain.connect(server_host, server_port, 3000);
+  if (!up) {
+    Serial.printf("POST %s: connect to %s:%u failed\n", path, server_host, server_port);
+    return "";
+  }
+  c.printf("POST %s HTTP/1.1\r\nHost: %s\r\n%sContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
+           path, host_hdr, token_header.c_str(), content_type, unsigned(len));
   if (!send(c)) return "";
   String status, body;
   // 10 s: the server runs the full detector before replying.
