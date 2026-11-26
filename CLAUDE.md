@@ -28,7 +28,8 @@ Turn anything done more than once into a skill in `.claude/skills/<name>/SKILL.m
 existing skills correct when the procedure changes. When you finish a task that used a skill and
 found it wrong or incomplete, fix the skill in the same PR. Current skills:
 
-- `flash-board`: invoke whenever a board is flashed (USB or OTA).
+- `flash-board`: invoke whenever a board is flashed (USB or OTA). Also the canonical route for OTA from a cloud
+  session (joins the house tailnet; board is at fixed IP 10.0.1.52).
 - `device-debug-server`: run whistle-lab on the laptop to receive device triggers and heartbeats.
 - `port-detector-stage`: move detector code from Python to `firmware/lib/whistle_dsp` with a comparison test.
 
