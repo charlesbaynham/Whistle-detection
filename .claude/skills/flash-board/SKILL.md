@@ -7,10 +7,42 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
 
 ## Where it can run
 
-- **Cloud session:** can build (`cd firmware && pio run`) but cannot reach the board (no USB, no LAN).
-  Either ask the user to run the upload, or start a Remote Control session on a machine that has the
-  board on USB or is on the same LAN, with PlatformIO installed (`pipx install platformio` or `uv tool install platformio`).
+- **Cloud session, OTA over Tailscale (canonical):** see "Cloud OTA" below. Needs `secrets.ini`.
+- **Cloud session, USB:** impossible. Ask the user, or start a Remote Control session on a machine with the board on USB.
 - **User's machine / Remote Control:** everything below.
+
+## Cloud OTA (Tailscale)
+
+The board has a fixed IP, `10.0.1.52` (DHCP reservation on the Pi; DNS `whistle-echo.ha`, not resolvable from the cloud, use the IP).
+Cloud sessions reach `10.0.0.0/16` via the house Headscale; `openwrt-pi` (`100.64.0.1`, `10.0.1.11`) is the subnet router.
+
+```sh
+# 1. Mint ephemeral GPG key + fetch the auth key: follow house-absolute:fetching-secrets (get_ts_authkey, one call).
+#    Decrypt straight into the script; never echo it:
+TS_AUTHKEY="$($S/decrypt.sh ts.asc $FPR)" .claude/skills/flash-board/ts_connect.sh
+# 2. Check the board answers (expect "reply: AUTH <nonce>"):
+python3 .claude/skills/flash-board/ota_probe.py 10.0.1.52
+# 3. secrets.ini must exist (see Prerequisites), then:
+uv tool install platformio    # once; ~/.local/bin/pio
+cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
+```
+
+- The key is reusable + ephemeral, expires 2027-10-15 (renewal procedure is in the `tailscale-connect` skill of `ha-workspace`).
+- `tailscaled` dies when the container sleeps; re-run `ts_connect.sh` (idempotent) if probes start timing out.
+- Verified 2026-11-26: kernel-mode join works in a cloud session (`/dev/net/tun` present), `tailscale ping 10.0.1.52`
+  routes via openwrt-pi (DERP), and the board answers the OTA invitation with `AUTH`. Build of `atom-echo-ota` works.
+- **Not yet verified: the actual upload.** espota makes the board connect *back* over TCP to the invitation's source
+  address. Tailnet→LAN traffic is SNATed by the Pi, so the board sees `10.0.1.11` and will connect to the Pi, not to
+  the cloud session. If the upload stalls after `Authenticating...OK` ("No response from device" / hangs at 0%), that is
+  why. Fixes, in order of preference: (a) forward the port through the Pi (`ssh -R 0.0.0.0:<p>:127.0.0.1:<p>` to the Pi
+  with `--host_port=<p>`, needs dropbear `-a`/GatewayPorts; `lab-ssh` skill in ha-workspace); (b) disable SNAT on the Pi
+  (`--snat-subnet-routes=false`) and add `100.64.0.0/10 via 10.0.1.11` on the board's gateway; (c) switch to HTTP-pull OTA
+  (planned). Update this section with whichever works.
+- No `/dev/net/tun`: `ts_connect.sh` falls back to userspace networking, where only processes using
+  `tailscale nc`/the SOCKS proxy are routed; plain espota would not be. Untested.
+- `secrets.ini` in a cloud session: the Wi-Fi/OTA values live only in the user's encrypted backup
+  (`~/whistle-echo-backup/secrets.ini.asc` on the laptop). Ask Charles to supply it (or a Secret Server entry),
+  never commit it.
 
 ## Prerequisites
 
