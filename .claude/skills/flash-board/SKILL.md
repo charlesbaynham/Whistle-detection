@@ -32,13 +32,16 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 - `tailscaled` dies when the container sleeps; re-run `ts_connect.sh` (idempotent) if probes start timing out.
 - Verified 2026-11-26: kernel-mode join works in a cloud session (`/dev/net/tun` present), `tailscale ping 10.0.1.52`
   routes via openwrt-pi (DERP), and the board answers the OTA invitation with `AUTH`. Build of `atom-echo-ota` works.
-- **Not yet verified: the actual upload.** espota makes the board connect *back* over TCP to the invitation's source
-  address. Tailnet→LAN traffic is SNATed by the Pi, so the board sees `10.0.1.11` and will connect to the Pi, not to
-  the cloud session. If the upload stalls after `Authenticating...OK` ("No response from device" / hangs at 0%), that is
-  why. Fixes, in order of preference: (a) forward the port through the Pi (`ssh -R 0.0.0.0:<p>:127.0.0.1:<p>` to the Pi
-  with `--host_port=<p>`, needs dropbear `-a`/GatewayPorts; `lab-ssh` skill in ha-workspace); (b) disable SNAT on the Pi
-  (`--snat-subnet-routes=false`) and add `100.64.0.0/10 via 10.0.1.11` on the board's gateway; (c) switch to HTTP-pull OTA
-  (planned). Update this section with whichever works.
+- **Verified 2026-11-26: the upload does NOT work from the tailnet as-is.** Invitation and `Authenticating...OK`
+  succeed, then `Waiting for device...` / `No response from device` after ~10 s. espota makes the board connect *back*
+  over TCP to the invitation's source address; the Pi SNATs tailnet→LAN traffic, so the board dials `10.0.1.11:<port>`
+  (the Pi) and nothing listens there. `firmware/` has no HTTP-pull OTA yet, so a push is the only route. Fixes (all need
+  a change outside the cloud session): (a) run espota from a tailnet node that sits on the LAN without SNAT, or forward
+  the port on the Pi to the session's tailnet IP (`100.64.0.10`-style address, see `tailscale ip -4`);
+  (b) disable SNAT on the Pi (`--snat-subnet-routes=false`) and add `100.64.0.0/10 via 10.0.1.11` on the board's gateway;
+  (c) HTTP-pull OTA in firmware (needs one more USB/LAN flash first). Update this section with whichever works.
+- Setup that does work: `TS_AUTHKEY=... ts_connect.sh`, `ota_probe.py` (gets `AUTH`), `uv tool install platformio`,
+  secrets.ini fetched as above. No SSH or ha-workspace needed for any of those.
 - No `/dev/net/tun`: `ts_connect.sh` falls back to userspace networking, where only processes using
   `tailscale nc`/the SOCKS proxy are routed; plain espota would not be. Untested.
 
