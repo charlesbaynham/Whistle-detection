@@ -76,6 +76,7 @@ pio run -e atom-echo-ota -t upload --upload-port "$(getent ahostsv4 whistle-echo
 ```
 
 Success is `Result: OK`; if USB is attached, the serial log shows `OTA start` and then a reboot.
+A one-off `Authenticating...FAIL` has succeeded on retry: retry before suspecting the password.
 
 - The board must be running OTA-capable firmware with the same `ota_password`.
 - espota makes the device connect *back* to the host on a random TCP port: a host firewall blocking
