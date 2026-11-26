@@ -21,6 +21,7 @@ False-positive rejection is the priority.
   the user's USB or LAN. Never claim a firmware change works on hardware until it has been flashed
   and its serial output or behaviour checked.
 - Secrets (Wi-Fi, OTA password) live in `firmware/secrets.ini`, which is gitignored. Never commit it.
+  Fetch it with the Secret Server's `get_whistle_secrets_ini` (see `flash-board`).
 
 ## Skills
 
