@@ -103,7 +103,7 @@ def test_detect(client):
     assert hit["metrics"]["real_time_factor"] < 1 and hit["metrics"]["hmm_states"] > 0
     assert not detect(tune_wav([], seed=10))["detected"]
     scale = detect(tune_wav(list(np.geomspace(2000, 1000, 13)), note_s=0.15, seed=11))  # a path could glide it
-    assert not scale["detected"] and scale["candidates"][0]["rho"] < 90
+    assert not scale["detected"] and all(c["rho"] < 90 for c in scale["candidates"] if c["veto"] is None)
 
 
 def test_device_trigger_without_templates(client, tmp_path):

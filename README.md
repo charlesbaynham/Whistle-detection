@@ -19,11 +19,25 @@ steadiness ≥ 0.6 (frames within ±0.75 st of their note's median, so a track c
 unrelated melody; a scoop into the first note is tolerated), off-path ≤ 0.3 (frames where the loudest
 tonal pixel is >1 st from the track, so it can't sit on one note while others are whistled) and step
 error ≤ 2.5 st and ≤ 50 % of each template step (median-to-median intervals; the relative limit stops
-a +2 st step being passed by a held note split in two). The page shows all of them and any veto.
+a +2 st step being passed by a held note split in two) and note score ≥ 0 (the quietest note's median
+pixel score on the track, so a whistle missing one note can't pass by laying that note over silence;
+off-path can't see this, since nothing is loud elsewhere either). The page shows all of them and any veto.
+
+Note score, measured 2026-11-26: true 5-note patterns that pass the other vetoes ≥ 2.2 (16 of 20 in
+`default`, leave-one-out templates give the same; one more labelled turn-off is whistled with its second
+note missing, −0.9, and is now rejected); synthetic true patterns (notebook 03 §5 injections, 240) ≥ 0.3 at
+0 dB band SNR and ≥ 2.1 at 6 dB, none lost. Tracks with a note in silence: −0.6 (device clip
+`20261126T085412`, a 4-note whistle detected as turn-off at ρ̂ 223), −1.3 (`detect-tests` "pattern which
+is not registered", a false turn-off at ρ̂ 323), −1.8 (the unrelated tune, ρ̂ 171). A coverage limit
+(share of each note's frames with s > 2) separated the real clips as well (≥ 0.5 vs 0) but lost 6 of 61
+synthetic patterns at 0 dB.
 
 Threshold: `WHISTLE_DETECT_THRESHOLD` (default 200). Measured with the 5-note patterns (templates from
 12 quiet-room recordings) on 17 min of TV audio in 5 s sliding windows and 600 random 3–20 s chops: no
-trigger above ρ̂ 174; true patterns 398–2348 quiet, 511–1129 over TV (11/12 and 6/8 detected). The
+trigger above ρ̂ 174 (a re-run on 2026-11-26 with 1 s window hop and different chops: windows ≤ 69, but one
+20 s chop triggers turn-on at ρ̂ 206 on a 5-note tonal fragment 1080→895→990→721→845 Hz near 182 s of
+the no-signal recording, which every veto passes); true patterns 398–2348 quiet, 511–1129 over TV (11/12 and
+6/8 detected; 10/12 and 6/8 with the note-score veto, which rejects the 4-note turn-off). The
 3-note patterns gave ~21 false triggers/h on the same TV audio at the old default of 90: a 3-note
 template is too easily matched by music.
 
