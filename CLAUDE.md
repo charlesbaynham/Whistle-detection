@@ -7,8 +7,8 @@ False-positive rejection is the priority.
   (whitened spectrogram, Viterbi track search, template bank, χ²/path vetoes). See README.md.
   `uv sync`, `uv run pytest`. Deployed from `main` by CI (see `.github/workflows/image.yml`).
 - `firmware/`: PlatformIO project for the M5Stack ATOM Echo (ESP32-PICO-D4, 4 MB flash, no PSRAM,
-  PDM mic). See `firmware/README.md` for pins and build. Plan: most detection runs on the device,
-  the server only re-checks candidates.
+  PDM mic). See `firmware/README.md` for pins and build. The device runs a cheap ≥3-note trigger
+  (`firmware/lib/whistle_dsp`, a port of `notes.device_events`) and uploads clips; the server re-checks them.
 - Home Assistant integration (planned, not built): MQTT over Wi-Fi. Device publishes detections;
   HA sends back ok/error feedback, beep-to-identify, and add/delete-pattern commands.
 - Firmware updates: USB once, then ArduinoOTA over the LAN (HTTP pull OTA later for many nodes).
@@ -29,6 +29,7 @@ existing skills correct when the procedure changes. When you finish a task that 
 found it wrong or incomplete, fix the skill in the same PR. Current skills:
 
 - `flash-board`: invoke whenever a board is flashed (USB or OTA).
+- `device-debug-server`: run whistle-lab on the laptop to receive device triggers and heartbeats.
+- `port-detector-stage`: move detector code from Python to `firmware/lib/whistle_dsp` with a comparison test.
 
-Likely future skills: capturing audio from the device for the dataset, porting a detector stage
-from Python to C++ with a bit-exact comparison test, HA integration checks.
+Likely future skills: capturing audio from the device for the dataset, HA integration checks.
