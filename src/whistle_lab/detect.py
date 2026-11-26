@@ -15,6 +15,9 @@ CHI0 = 0.1
 THRESHOLD = float(os.environ.get("WHISTLE_DETECT_THRESHOLD", "200"))
 # Path vetoes, per note (notebook 03, README). Steadiness 0.6 lets a scoop into the first note through.
 MIN_STEADINESS, MAX_OFF_PATH, MAX_STEP_ERROR_ST, MAX_STEP_RATIO = 0.6, 0.3, 2.5, 0.5
+# Quietest note's median pixel score: real patterns >= 2.2 (0.3 for synthetic ones at 0 dB band SNR); a note
+# laid over silence (4-note whistle passed as a 5-note pattern) <= -0.6.
+MIN_NOTE_SCORE = 0.0
 PEAKS_CHECKED, PEAK_SEP_S = 3, 1.0
 FFT_FLOPS = 5 * search.NFFT * np.log2(search.NFFT)  # radix-2 complex FFT, standard estimate
 ESP32_HZ = 240e6
@@ -59,8 +62,9 @@ def templates(dataset_dir: Path):
 
 def _candidate(label, tp, tr, rw, s, b):
     fr, cells, ks = tr.path(b)
-    steadiness, off_path, step_error, step_ratio = search.consistency(s, fr, cells, ks, tp["steps"])
-    veto = ("pitch glides within a note" if steadiness < MIN_STEADINESS else
+    steadiness, off_path, step_error, step_ratio, note_score = search.consistency(s, fr, cells, ks, tp["steps"])
+    veto = ("a note is missing" if note_score < MIN_NOTE_SCORE else
+            "pitch glides within a note" if steadiness < MIN_STEADINESS else
             "skips notes the whistler played" if off_path > MAX_OFF_PATH else
             "intervals don't match" if step_error > MAX_STEP_ERROR_ST or step_ratio > MAX_STEP_RATIO else None)
     return dict(
@@ -72,6 +76,7 @@ def _candidate(label, tp, tr, rw, s, b):
         off_path=off_path,
         step_error=step_error,
         step_ratio=step_ratio,
+        note_score=note_score,
         veto=veto,
         t_start=float(fr[0] * search.DT + search.NFFT / 2 / search.FS),
         t_end=float(fr[-1] * search.DT + search.NFFT / 2 / search.FS),

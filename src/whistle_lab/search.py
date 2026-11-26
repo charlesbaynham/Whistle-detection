@@ -209,8 +209,10 @@ def consistency(s, frames, cells, notes, steps_st, near_st=0.75, off_st=1.0, ton
     drift otherwise lets a "note" glide along any melody. off_path: worst note's fraction of frames whose
     loudest tonal pixel is more than off_st away, i.e. the whistler was on a note the track skipped.
     step_error: largest |median-to-median step - template step| in semitones; step_ratio: the same relative
-    to each template step, so a small step can't be passed by a held note split in two."""
-    steadiness, off_path, medians = 1.0, 0.0, []
+    to each template step, so a small step can't be passed by a held note split in two. note_score: quietest
+    note's median pixel score on the track; below 0 the track crossed silence where a note should be, i.e. a
+    whistle missing one note of the pattern (off_path can't see this: nothing is loud elsewhere either)."""
+    steadiness, off_path, note_score, medians = 1.0, 0.0, np.inf, []
     jm = s[frames].argmax(1)
     loud_elsewhere = (s[frames, jm] > tonal) & (np.abs(jm - cells) > off_st * CELLS_PER_ST)
     for k in range(len(steps_st) + 1):
@@ -219,8 +221,9 @@ def consistency(s, frames, cells, notes, steps_st, near_st=0.75, off_st=1.0, ton
         medians.append(med)
         steadiness = min(steadiness, float((np.abs(cells[m] - med) <= near_st * CELLS_PER_ST).mean()))
         off_path = max(off_path, float(loud_elsewhere[m].mean()))
+        note_score = min(note_score, float(np.median(s[frames[m], cells[m]])))
     err = np.abs(np.diff(medians) / CELLS_PER_ST - np.asarray(steps_st))
-    return steadiness, off_path, float(err.max()), float((err / np.abs(steps_st)).max())
+    return steadiness, off_path, float(err.max()), float((err / np.abs(steps_st)).max()), note_score
 
 
 def search(s, runners, chi0):

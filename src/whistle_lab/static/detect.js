@@ -80,7 +80,7 @@ function drawTracks(toXY, res) {
 
 function showCandidates(res) {
   const t = $("cands");
-  t.innerHTML = "<tr><th></th><th>pattern</th><th>ρ̂ vs threshold</th><th class=n>ρ̂</th><th class=n>χ²</th><th class=n>steady</th><th class=n>off-path</th><th class=n>step err</th><th class=n>err/step</th><th>notes (Hz)</th><th class=n>span</th><th>veto</th></tr>";
+  t.innerHTML = "<tr><th></th><th>pattern</th><th>ρ̂ vs threshold</th><th class=n>ρ̂</th><th class=n>χ²</th><th class=n>steady</th><th class=n>off-path</th><th class=n>step err</th><th class=n>err/step</th><th class=n title='quietest note: median pixel score on the track'>note s</th><th>notes (Hz)</th><th class=n>span</th><th>veto</th></tr>";
   const top = Math.max(res.threshold * 1.5, ...res.candidates.map((c) => c.rho ?? 0));
   res.candidates.forEach((c, i) => {
     const tr = t.insertRow();
@@ -95,6 +95,7 @@ function showCandidates(res) {
     num(c.off_path, 2);
     num(c.step_error, 1);
     num(c.step_ratio, 2);
+    num(c.note_score, 1);
     tr.insertCell().textContent = c.notes_hz.map((f) => (f === null ? "—" : f.toFixed(0))).join(" → ");
     const sp = tr.insertCell(); sp.className = "n";
     sp.textContent = c.rho === null ? "—" : `${c.t_start.toFixed(2)}–${c.t_end.toFixed(2)} s`;
