@@ -18,11 +18,13 @@ patterns; false positives are cheap because the server re-checks every clip. DSP
 frame (`dsp_us_*` in the heartbeat). `tests/test_device_port.py` checks it against the
 Python on synthetic whistles and on any recordings in `data/default`.
 
-Audio goes through a DC blocker into a ring buffer (32 KB heap blocks, allocated after Wi-Fi: 4 fit,
-4.1 s, leaving ~80 KB free). On a trigger, the
+Audio goes through a DC blocker into a ring buffer (32 KB heap blocks, allocated after Wi-Fi: with a
+plain-HTTP server 4 fit, 4.1 s, leaving ~80 KB free; with `https://` only 3, 3.1 s, because the TLS
+handshake takes ~60 KB). On a trigger, the
 clip from 0.25 s before the first note to 0.25 s after the last (capped at 4 s) is streamed from the
 ring, without a copy, by a network task on core 0. The mic never stops. If the writer laps the upload,
-the clip is flagged `overrun`.
+the clip is flagged `overrun`. Over HTTPS a request takes ~1.1–1.4 s, so long clips are expected to
+overrun (not yet measured with real triggers).
 
 ## Debug server
 
