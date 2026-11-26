@@ -194,6 +194,41 @@ async def detect(audio: UploadFile = File(...), dataset: str = Form("default")):
     return det.detect(x, sr, tpls)
 
 
+DEVICE_DATASET = "device-triggers"
+
+
+@app.post("/api/device/trigger")
+async def device_trigger(audio: UploadFile = File(...), meta: str = Form("{}"), dataset: str = Form("default")):
+    """A clip the device's trigger forwarded: saved to DEVICE_DATASET with the device's debug metadata, then
+    re-checked by the full detector against `dataset`'s templates. The reply is short for the device to parse."""
+    m = json.loads(meta or "{}")
+    saved = await upload(audio=audio, dataset=DEVICE_DATASET, label="", notes="", client=json.dumps(m))
+    sr, x = wavfile.read(data_dir() / DEVICE_DATASET / f"{saved['id']}.wav")
+    x = x / 32768.0 if x.dtype.kind == "i" else x
+    tpls = _templates(dataset) if (data_dir() / dataset).is_dir() else {}
+    res = det.detect(x, sr, tpls) if tpls and len(x) / sr > 0.2 else None
+    best = res["candidates"][0] if res and res["candidates"] else None
+    reply = dict(id=saved["id"], detected=bool(res and res["detected"]), label=res and res["label"],
+                 rho=best and best["rho"], veto=best and best["veto"], checked=res is not None)
+    saved["server"] = dict(reply, best_label=best and best["label"], threshold=res and res["threshold"])
+    (data_dir() / DEVICE_DATASET / f"{saved['id']}.json").write_text(json.dumps(saved, indent=2))
+    hz = [round(n[2]) for n in m.get("notes", [])]
+    print(f"[trigger] {m.get('host', '?')} {saved['duration_s']:.2f}s notes={hz} -> "
+          f"{'DETECTED ' + reply['label'] if reply['detected'] else 'rejected'} "
+          f"best={saved['server']['best_label']} rho={reply['rho'] and round(reply['rho'])} veto={reply['veto']} "
+          f"id={saved['id']}", flush=True)
+    return reply
+
+
+@app.post("/api/device/heartbeat")
+def device_heartbeat(body: dict):
+    body["received"] = datetime.now(timezone.utc).isoformat()
+    with open(data_dir() / "device-heartbeats.jsonl", "a") as f:
+        f.write(json.dumps(body) + "\n")
+    print("[heartbeat] " + " ".join(f"{k}={v}" for k, v in body.items() if k != "received"), flush=True)
+    return {"ok": True}
+
+
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
 
 

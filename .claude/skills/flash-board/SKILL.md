@@ -52,7 +52,7 @@ the first upload: `pio run -e atom-echo -t erase`. To restore, run the same espt
 cd firmware
 pio device list                      # ATOM shows as /dev/ttyUSB* or /dev/ttyACM* (macOS: /dev/cu.usbserial-*)
 pio run -e atom-echo -t upload       # auto-detects the port; add --upload-port /dev/ttyUSB0 if several
-pio device monitor -e atom-echo      # expect "whistle-fw: mic up", then "wifi up: <ip>, OTA at <host>.local"
+pio device monitor -e atom-echo      # expect "whistle-fw <rev>: mic up, ring 5.12 s ...", then "wifi up: <ip>, OTA at <host>.local, server ..."
 ```
 
 - `pio device monitor` is interactive. To capture a boot log from an agent session:
@@ -79,6 +79,8 @@ Success is `Result: OK`; if USB is attached, the serial log shows `OTA start` an
 A one-off `Authenticating...FAIL` has succeeded on retry: retry before suspecting the password.
 
 - The board must be running OTA-capable firmware with the same `ota_password`.
+- `Sending invitation .......... No response from the ESP`: first `ping whistle-echo.ha`. No reply
+  (and `ip neigh` shows FAILED) means the board is off or off Wi-Fi, not a firewall problem.
 - espota makes the device connect *back* to the host on a random TCP port: a host firewall blocking
   inbound connections gives "No response from device". Fix by allowing it, or pin a port with
   `--host_port=<port>` in `upload_flags` and open that one.

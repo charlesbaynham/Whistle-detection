@@ -1,4 +1,5 @@
 import io
+import json
 import wave
 
 import numpy as np
@@ -103,3 +104,19 @@ def test_detect(client):
     assert not detect(tune_wav([], seed=10))["detected"]
     scale = detect(tune_wav(list(np.geomspace(2000, 1000, 13)), note_s=0.15, seed=11))  # a path could glide it
     assert not scale["detected"] and scale["candidates"][0]["rho"] < 90
+
+
+def test_device_trigger_without_templates(client, tmp_path):
+    r = client.post("/api/device/trigger", files={"audio": ("t.wav", wav_bytes(sr=16000, dur=1.0))},
+                    data={"meta": '{"host": "echo", "notes": [[0.1, 0.3, 1500.0]]}'})
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    assert rep["checked"] is False and rep["detected"] is False
+    meta = json.loads((tmp_path / "device-triggers" / f"{rep['id']}.json").read_text())
+    assert meta["client"]["host"] == "echo" and meta["sample_rate"] == 16000 and meta["server"]["id"] == rep["id"]
+
+
+def test_device_heartbeat(client, tmp_path):
+    assert client.post("/api/device/heartbeat", json={"host": "echo", "frames": 10}).json() == {"ok": True}
+    line = json.loads((tmp_path / "device-heartbeats.jsonl").read_text().splitlines()[0])
+    assert line["frames"] == 10 and "received" in line
