@@ -117,22 +117,53 @@ void wav_header(uint8_t* h, uint32_t n) {
   memcpy(h + 36, "data", 4); u32(40, 2 * n);
 }
 
+// Reads one HTTP response, up to Content-Length, sleeping between polls. Not Stream::readString: in this core
+// it spins until the timeout without yielding, which starves core 0 and trips the task watchdog.
+bool read_response(WiFiClient& c, String& head, String& body, uint32_t timeout_ms) {
+  String r;
+  int body_at = -1, body_len = -1;
+  uint8_t buf[256];
+  for (const uint32_t t0 = millis(); millis() - t0 < timeout_ms;) {
+    const int n = c.available() ? c.read(buf, sizeof buf) : 0;
+    if (n <= 0) {
+      if (!c.connected()) break;
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    for (int i = 0; i < n; i++) r += char(buf[i]);
+    if (body_at < 0) {
+      const int end = r.indexOf("\r\n\r\n");
+      if (end < 0) continue;
+      body_at = end + 4;
+      String h = r.substring(0, end);
+      h.toLowerCase();
+      const int cl = h.indexOf("content-length:");
+      if (cl >= 0) body_len = h.substring(cl + 15).toInt();
+    }
+    if (body_len >= 0 && int(r.length()) - body_at >= body_len) break;
+  }
+  if (body_at < 0) return false;
+  head = r.substring(0, r.indexOf('\r'));
+  body = r.substring(body_at);
+  return body_len < 0 || int(body.length()) >= body_len;
+}
+
 // POSTs a body built by `send` (which must write exactly `len` bytes) and returns the response body, or ""
 // on failure.
 template <typename F>
 String http_post(const char* path, const char* content_type, size_t len, F send) {
   WiFiClient c;
-  c.setTimeout(10);  // seconds; the server runs the full detector before replying
+  c.setTimeout(5);  // seconds, for socket sends
   if (!c.connect(server_host, server_port, 3000)) return "";
   c.printf("POST %s HTTP/1.1\r\nHost: %s:%u\r\nContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
            path, server_host, server_port, content_type, unsigned(len));
   if (!send(c)) return "";
-  String status = c.readStringUntil('\n');
-  while (c.connected() || c.available()) {  // skip headers
-    String h = c.readStringUntil('\n');
-    if (h == "\r" || h.isEmpty()) break;
+  String status, body;
+  // 10 s: the server runs the full detector before replying.
+  if (!read_response(c, status, body, 10000)) {
+    Serial.printf("POST %s: no complete response\n", path);
+    return "";
   }
-  String body = c.readString();
   if (!status.startsWith("HTTP/1.1 200")) {
     Serial.printf("POST %s: %s %s\n", path, status.c_str(), body.substring(0, 200).c_str());
     return "";
@@ -200,7 +231,10 @@ void net_task(void*) {
     bool ok = false;
     if (WiFi.status() == WL_CONNECTED) {
       if (j->trigger) uploading = true;
+      const uint32_t t0 = millis();
       ok = j->trigger ? post_trigger(*j) : post_heartbeat(*j);
+      Serial.printf("net: %s %s in %lu ms\n", j->trigger ? "trigger" : "heartbeat", ok ? "ok" : "FAILED",
+                    millis() - t0);
       uploading = false;
     }
     if (j->trigger) {
@@ -276,6 +310,7 @@ uint32_t det_start = 0;  // write_pos when the detector saw its first sample
 struct Stats {
   uint32_t frames, short_reads, tonal, notes, events, triggers;
   uint32_t dsp_us_sum, dsp_us_max;
+  uint32_t loop_gap_ms_max;  // longest time between mic reads; the DMA holds 128 ms
   double band_db_sum, ms_sum;  // band median dB, mean square of the signal
 } st{};
 uint32_t frames_total = 0, triggers_total = 0;
@@ -343,17 +378,18 @@ void heartbeat() {
   last_dsp_us_avg = st.dsp_us_sum / f;
   last_dsp_us_max = st.dsp_us_max;
   Job* j = new Job{false, 0, 0, String()};
-  char b[640];
+  char b[704];
   snprintf(b, sizeof b,
            "{\"host\":\"" HOSTNAME "\",\"fw\":\"" GIT_REV "\",\"uptime_s\":%u,\"frames\":%u,\"short_reads\":%u,"
            "\"tonal_frac\":%.3f,\"notes\":%u,\"events\":%u,\"triggers\":%u,\"sent\":%u,\"failed\":%u,"
            "\"overrun\":%u,\"dropped\":%u,\"level_dbfs\":%.1f,\"band_median_db\":%.1f,\"dsp_us_avg\":%u,"
-           "\"dsp_us_max\":%u,\"heap\":%u,\"heap_min\":%u,\"rssi\":%d,\"ring_s\":%.2f}",
+           "\"dsp_us_max\":%u,\"loop_gap_ms_max\":%u,\"heap\":%u,\"heap_min\":%u,\"rssi\":%d,\"ring_s\":%.2f}",
            now / 1000, unsigned(st.frames), unsigned(st.short_reads), st.tonal / float(f), unsigned(st.notes),
            unsigned(st.events), unsigned(st.triggers), unsigned(n_sent.load()), unsigned(n_failed.load()),
            unsigned(n_overrun.load()), unsigned(n_dropped.load()), 10 * log10(st.ms_sum / f + 1e-12),
-           st.band_db_sum / f, unsigned(last_dsp_us_avg), unsigned(last_dsp_us_max), ESP.getFreeHeap(),
-           ESP.getMinFreeHeap(), int(WiFi.RSSI()), float(ring_len) / SAMPLE_RATE);
+           st.band_db_sum / f, unsigned(last_dsp_us_avg), unsigned(last_dsp_us_max),
+           unsigned(st.loop_gap_ms_max), ESP.getFreeHeap(), ESP.getMinFreeHeap(), int(WiFi.RSSI()),
+           float(ring_len) / SAMPLE_RATE);
   j->json = b;
   Serial.printf("heartbeat %s\n", b);
   enqueue(j);
@@ -402,6 +438,11 @@ void loop() {
   }
   size_t got = 0;
   i2s_read(MIC_PORT, hop_buf, sizeof(hop_buf), &got, portMAX_DELAY);
+  static uint32_t last_read = millis();
+  const uint32_t gap = millis() - last_read;
+  last_read += gap;
+  st.loop_gap_ms_max = std::max(st.loop_gap_ms_max, gap);
+  if (gap > 100) Serial.printf("loop stalled %u ms\n", unsigned(gap));
   if (got != sizeof(hop_buf)) {
     st.short_reads++;
     return;

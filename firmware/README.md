@@ -14,11 +14,12 @@ magenta during OTA.
 Python package. Per 16 ms hop: 512-point Hann FFT, then a tonal gate in 700–4000 Hz (prominence > 20 dB,
 concentration > 0.5, subharmonic < −10 dB). Gated frames are joined into notes, and the notes into
 events that end after 0.5 s of silence. An event of ≥3 notes is a trigger. The device doesn't match
-patterns; false positives are cheap because the server re-checks every clip. DSP costs ~1 ms per 16 ms
-frame (measured: see `dsp_us_*` in the heartbeat). `tests/test_device_port.py` checks it against the
+patterns; false positives are cheap because the server re-checks every clip. DSP costs ~0.6 ms per 16 ms
+frame (`dsp_us_*` in the heartbeat). `tests/test_device_port.py` checks it against the
 Python on synthetic whistles and on any recordings in `data/default`.
 
-Audio goes through a DC blocker into a ring buffer (5 × 32 KB heap blocks = 5.1 s). On a trigger, the
+Audio goes through a DC blocker into a ring buffer (32 KB heap blocks, allocated after Wi-Fi: 4 fit,
+4.1 s, leaving ~80 KB free). On a trigger, the
 clip from 0.25 s before the first note to 0.25 s after the last (capped at 4 s) is streamed from the
 ring, without a copy, by a network task on core 0. The mic never stops. If the writer laps the upload,
 the clip is flagged `overrun`.
@@ -31,7 +32,7 @@ the clip is flagged `overrun`.
   intervals, timings, heap, RSSI, firmware rev). The server saves it to dataset `device-triggers`,
   runs `detect.detect` against the `default` templates and replies `{detected, label, rho, veto}`.
 - `/api/device/heartbeat` every 10 s: frame, note, event and trigger counts, tonal fraction, level,
-  band noise floor, DSP µs, heap, RSSI. Appended to `$WHISTLE_DATA_DIR/device-heartbeats.jsonl`.
+  band noise floor, DSP µs, longest gap between mic reads, heap, RSSI. Appended to `$WHISTLE_DATA_DIR/device-heartbeats.jsonl`.
 
 Serial prints one line per note, event, trigger, server reply and heartbeat. How to run the server:
 `.claude/skills/device-debug-server/SKILL.md`.
