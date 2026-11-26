@@ -16,7 +16,9 @@ import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+import hmac
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
@@ -197,7 +199,14 @@ async def detect(audio: UploadFile = File(...), dataset: str = Form("default")):
 DEVICE_DATASET = "device-triggers"
 
 
-@app.post("/api/device/trigger")
+def require_device_token(x_whistle_token: str = Header("")):
+    """If WHISTLE_DEVICE_TOKEN is set, the device endpoints need it as X-Whistle-Token. Unset = open."""
+    want = os.environ.get("WHISTLE_DEVICE_TOKEN", "")
+    if want and not hmac.compare_digest(x_whistle_token.encode(), want.encode()):
+        raise HTTPException(401, "bad or missing X-Whistle-Token")
+
+
+@app.post("/api/device/trigger", dependencies=[Depends(require_device_token)])
 async def device_trigger(audio: UploadFile = File(...), meta: str = Form("{}"), dataset: str = Form("default")):
     """A clip the device's trigger forwarded: saved to DEVICE_DATASET with the device's debug metadata, then
     re-checked by the full detector against `dataset`'s templates. The reply is short for the device to parse."""
@@ -220,7 +229,7 @@ async def device_trigger(audio: UploadFile = File(...), meta: str = Form("{}"), 
     return reply
 
 
-@app.post("/api/device/heartbeat")
+@app.post("/api/device/heartbeat", dependencies=[Depends(require_device_token)])
 def device_heartbeat(body: dict):
     body["received"] = datetime.now(timezone.utc).isoformat()
     with open(data_dir() / "device-heartbeats.jsonl", "a") as f:

@@ -120,3 +120,12 @@ def test_device_heartbeat(client, tmp_path):
     assert client.post("/api/device/heartbeat", json={"host": "echo", "frames": 10}).json() == {"ok": True}
     line = json.loads((tmp_path / "device-heartbeats.jsonl").read_text().splitlines()[0])
     assert line["frames"] == 10 and "received" in line
+
+
+def test_device_token(client, monkeypatch):
+    monkeypatch.setenv("WHISTLE_DEVICE_TOKEN", "s3cret")
+    hb = {"host": "echo"}
+    assert client.post("/api/device/heartbeat", json=hb).status_code == 401
+    assert client.post("/api/device/heartbeat", json=hb, headers={"X-Whistle-Token": "nope"}).status_code == 401
+    assert client.post("/api/device/heartbeat", json=hb, headers={"X-Whistle-Token": "s3cret"}).status_code == 200
+    assert client.get("/health").status_code == 200  # only the device endpoints are gated
