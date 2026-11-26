@@ -95,7 +95,8 @@ the first upload: `pio run -e atom-echo -t erase`. To restore, run the same espt
 cd firmware
 pio device list                      # ATOM shows as /dev/ttyUSB* or /dev/ttyACM* (macOS: /dev/cu.usbserial-*)
 pio run -e atom-echo -t upload       # auto-detects the port; add --upload-port /dev/ttyUSB0 if several
-pio device monitor -e atom-echo      # expect "whistle-fw <rev>: mic up, ring 5.12 s ...", then "wifi up: <ip>, OTA at <host>.local, server ..."
+pio device monitor -e atom-echo      # expect "whistle-fw <rev>: mic up, ring 3.07 s ..." (4.10 s with plain HTTP),
+                                     # "wifi up: <ip>, OTA at <host>.local, server ...", then "net: heartbeat ok" every 10 s
 ```
 
 - `pio device monitor` is interactive. To capture a boot log from an agent session:
