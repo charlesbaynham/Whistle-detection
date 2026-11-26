@@ -59,7 +59,9 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 
 The shared copy is the Secret Server entry `whistle_secrets_ini` (base64 of the whole file): fetch it
 with `get_whistle_secrets_ini` and `house-absolute:fetching-secrets`, and decrypt only into
-`firmware/secrets.ini` as in "Cloud OTA" step 3. Its `debug_server` is a laptop's dynamic address.
+`firmware/secrets.ini` as in "Cloud OTA" step 3. Its `debug_server` is the deployed server,
+`https://whistle.i.houseabsolute.co.uk` (since 2026-11-26; the firmware needs HTTPS support, #15, so flash
+current `main`). To use a laptop debug server instead, override that line locally.
 
 Whenever `secrets.ini` changes, store it again (from a machine with lab SSH access):
 
