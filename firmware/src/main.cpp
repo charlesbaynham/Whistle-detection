@@ -31,15 +31,16 @@ constexpr bool HAVE_SERVER = HAVE_WIFI && sizeof(DEBUG_SERVER) > 1;
 // ---- ring buffer: int16 at 16 kHz in 32 KB blocks (the heap's largest free block is ~110 KB) ----
 constexpr size_t BLOCK_SAMPLES = 16384;
 constexpr int MAX_BLOCKS = 5;            // 5.1 s
-constexpr size_t MIN_FREE_AFTER = 70000;  // leave this much heap for Wi-Fi and TCP
+constexpr size_t MIN_FREE_AFTER = 70000;       // leave this much heap for Wi-Fi and TCP
+constexpr size_t MIN_FREE_AFTER_TLS = 105000;  // plus the mbedTLS buffers and handshake
 int16_t* ring_blocks[MAX_BLOCKS];
 int n_blocks = 0;
 uint32_t ring_len = 0;                    // samples
 std::atomic<uint32_t> write_pos{0};       // total samples written; wraps after 74 h, differences stay correct
 
-void ring_init() {
+void ring_init(size_t min_free) {
   while (n_blocks < MAX_BLOCKS && ESP.getMaxAllocHeap() >= BLOCK_SAMPLES * 2 &&
-         ESP.getFreeHeap() >= BLOCK_SAMPLES * 2 + MIN_FREE_AFTER) {
+         ESP.getFreeHeap() >= BLOCK_SAMPLES * 2 + min_free) {
     ring_blocks[n_blocks] = static_cast<int16_t*>(malloc(BLOCK_SAMPLES * 2));
     if (!ring_blocks[n_blocks]) break;
     n_blocks++;
@@ -443,7 +444,7 @@ void setup() {
                 ESP.getMaxAllocHeap());
   // Wi-Fi and OTA first, so they get their memory and stay up whatever happens to the audio path.
   net_init();
-  ring_init();
+  ring_init(server_tls ? MIN_FREE_AFTER_TLS : MIN_FREE_AFTER);
   audio_ok = ring_len && mic_init();
   Serial.printf("whistle-fw %s: %s, ring %.2f s (%d blocks), heap %u free, %u max block\n", GIT_REV,
                 audio_ok ? "mic up" : "AUDIO DISABLED", float(ring_len) / SAMPLE_RATE, n_blocks,
