@@ -7,7 +7,7 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
 
 ## Where it can run
 
-- **Cloud session, OTA over Tailscale (canonical):** see "Cloud OTA" below. Needs `secrets.ini`.
+- **Cloud session, OTA over Tailscale (canonical):** see "Cloud OTA" below.
 - **Cloud session, USB:** impossible. Ask the user, or start a Remote Control session on a machine with the board on USB.
 - **User's machine / Remote Control:** everything below.
 
@@ -17,12 +17,13 @@ The board has a fixed IP, `10.0.1.52` (DHCP reservation on the Pi; DNS `whistle-
 Cloud sessions reach `10.0.0.0/16` via the house Headscale; `openwrt-pi` (`100.64.0.1`, `10.0.1.11`) is the subnet router.
 
 ```sh
-# 1. Mint ephemeral GPG key + fetch the auth key: follow house-absolute:fetching-secrets (get_ts_authkey, one call).
-#    Decrypt straight into the script; never echo it:
+# 1. Mint an ephemeral GPG key (house-absolute:fetching-secrets), then call get_ts_authkey and
+#    get_whistle_secrets_ini together. Decrypt each straight into its consumer; never echo either:
 TS_AUTHKEY="$($S/decrypt.sh ts.asc $FPR)" .claude/skills/flash-board/ts_connect.sh
 # 2. Check the board answers (expect "reply: AUTH <nonce>"):
 python3 .claude/skills/flash-board/ota_probe.py 10.0.1.52
-# 3. secrets.ini must exist (see Prerequisites), then:
+# 3. Write secrets.ini (see "secrets.ini" below), then build and upload:
+(umask 077; "$S/decrypt.sh" whistle.asc "$FPR" | base64 -d > firmware/secrets.ini)
 uv tool install platformio    # once; ~/.local/bin/pio
 cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 ```
@@ -40,18 +41,12 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
   (planned). Update this section with whichever works.
 - No `/dev/net/tun`: `ts_connect.sh` falls back to userspace networking, where only processes using
   `tailscale nc`/the SOCKS proxy are routed; plain espota would not be. Untested.
-- `secrets.ini` in a cloud session: the Wi-Fi/OTA values live only in the user's encrypted backup
-  (`~/whistle-echo-backup/secrets.ini.asc` on the laptop). Ask Charles to supply it (or a Secret Server entry),
-  never commit it.
 
 ## Prerequisites
 
 - `firmware/secrets.ini` exists (copy `secrets.ini.example`). If it's missing the build succeeds but
   Wi-Fi/OTA are compiled out, and the next update will need USB again. Check before a USB flash.
-  It is gitignored, so a fresh worktree lacks it. On the user's laptop an encrypted copy is at
-  `~/whistle-echo-backup/secrets.ini.asc`, readable with the agent GPG key (`get_gpg_private_key`, via
-  the `house-absolute:fetching-secrets` skill; import into a temporary `--homedir`, then decrypt with
-  `--output firmware/secrets.ini`). Re-encrypt it to that key whenever `secrets.ini` changes.
+  It is gitignored, so a fresh worktree or cloud session lacks it: see "secrets.ini" below.
 - Linux USB access: user in `dialout` (or `uucp`). That is enough on Ubuntu; if the port is still
   refused, install PlatformIO's udev rules
   (`curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules | sudo tee /etc/udev/rules.d/99-platformio-udev.rules`).
@@ -59,6 +54,20 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
   (see OTA below).
 - On the home LAN the board `whistle-echo` has a DHCP reservation (10.0.1.52, in the
   `houseabsolute-openwrt` router config) and DNS name `whistle-echo.ha`. Give new boards one too.
+
+## secrets.ini
+
+The shared copy is the Secret Server entry `whistle_secrets_ini` (base64 of the whole file): fetch it
+with `get_whistle_secrets_ini` and `house-absolute:fetching-secrets`, and decrypt only into
+`firmware/secrets.ini` as in "Cloud OTA" step 3. Its `debug_server` is a laptop's dynamic address.
+
+Whenever `secrets.ini` changes, store it again (from a machine with lab SSH access):
+
+```sh
+printf 'WHISTLE_SECRETS_INI=%s\n' "$(base64 -w0 firmware/secrets.ini)" \
+  | ssh root@10.0.1.3 /opt/homelab-infra/bin/seed-secret.sh --amend secretserver
+ssh root@10.0.1.3 'pct exec 118 -- /run/current-system/sw/bin/systemctl restart secretserver'
+```
 
 ## New board: identify and back up (read-only)
 
