@@ -22,6 +22,8 @@ def test_discovery_configs_fit_and_are_unique():
             seen.add(cfg["unique_id"])
             assert cfg["availability_topic"] == f"whistle/{node}/status"
             assert topic.startswith("homeassistant/") and topic.endswith("/config")
+            domain = topic.split("/")[1]
+            assert cfg["default_entity_id"] == f"{domain}.{cfg['unique_id']}"
     assert len(seen) == 3 * 7
 
 

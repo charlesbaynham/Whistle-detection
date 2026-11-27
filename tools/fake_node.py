@@ -45,12 +45,12 @@ def device(node: str) -> dict:
     }
 
 
-def _common(node: str, key: str, name: str) -> dict:
+def _common(node: str, domain: str, key: str, name: str) -> dict:
     uid = f"whistle_{node}"
     return {
         "name": name,
         "unique_id": f"{uid}_{key}",
-        "object_id": f"{uid}_{key}",
+        "default_entity_id": f"{domain}.{uid}_{key}",
         "availability_topic": topics(node)["status"],
         "device": device(node),
     }
@@ -71,13 +71,13 @@ def discovery(node: str, event_types: list[str]) -> dict[str, dict]:
     t = topics(node)
     out = {
         f"homeassistant/event/{uid}/whistle/config": {
-            **_common(node, "whistle", "Whistle"),
+            **_common(node, "event", "whistle", "Whistle"),
             "state_topic": t["detection"],
             "event_types": event_types,
             "icon": "mdi:whistle",
         },
         f"homeassistant/button/{uid}/identify/config": {
-            **_common(node, "identify", "Identify"),
+            **_common(node, "button", "identify", "Identify"),
             "command_topic": t["cmd"],
             "payload_press": json.dumps({"cmd": "identify"}, separators=(",", ":")),
             "device_class": "identify",
@@ -86,7 +86,7 @@ def discovery(node: str, event_types: list[str]) -> dict[str, dict]:
     }
     for key, name, unit, dev_class in SENSORS:
         cfg = {
-            **_common(node, key, name),
+            **_common(node, "sensor", key, name),
             "state_topic": t["telemetry"],
             "value_template": f"{{{{ value_json.{key} }}}}",
             "entity_category": "diagnostic",

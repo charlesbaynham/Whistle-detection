@@ -83,10 +83,11 @@ String device_json() {
          "\",\"manufacturer\":\"M5Stack\",\"model\":\"ATOM Echo\",\"sw_version\":\"" GIT_REV "\"}";
 }
 
-// Fields every discovery config shares.
-String common(const char* key, const char* name) {
-  return String("\"name\":\"") + name + "\",\"unique_id\":\"" + uid + "_" + key + "\",\"object_id\":\"" + uid + "_" +
-         key + "\",\"availability_topic\":\"" + t_status + "\",\"device\":" + device_json();
+// Fields every discovery config shares. default_entity_id pins the entity id to the node id: HA would
+// otherwise derive it from the device name (the hostname), which collides between nodes.
+String common(const char* domain, const char* key, const char* name) {
+  return String("\"name\":\"") + name + "\",\"unique_id\":\"" + uid + "_" + key + "\",\"default_entity_id\":\"" +
+         domain + "." + uid + "_" + key + "\",\"availability_topic\":\"" + t_status + "\",\"device\":" + device_json();
 }
 
 bool pub(const char* topic, const String& payload, bool retain) {
@@ -99,13 +100,13 @@ void publish_event_config() {
   String types_json;
   for (int i = 0; i < n_types; i++) types_json += String(i ? ",\"" : "\"") + types[i] + "\"";
   pub((String("homeassistant/event/") + uid + "/whistle/config").c_str(),
-      "{" + common("whistle", "Whistle") + ",\"state_topic\":\"" + t_detection + "\",\"event_types\":[" +
+      "{" + common("event", "whistle", "Whistle") + ",\"state_topic\":\"" + t_detection + "\",\"event_types\":[" +
           types_json + "],\"icon\":\"mdi:whistle\"}",
       true);
 }
 
 void publish_sensor_config(const char* key, const char* name, const char* unit, const char* dev_class) {
-  String s = "{" + common(key, name) + ",\"state_topic\":\"" + t_telemetry + "\",\"value_template\":\"{{ value_json." +
+  String s = "{" + common("sensor", key, name) + ",\"state_topic\":\"" + t_telemetry + "\",\"value_template\":\"{{ value_json." +
              key + " }}\",\"entity_category\":\"diagnostic\",\"state_class\":\"measurement\",\"expire_after\":45";
   if (*unit) s += String(",\"unit_of_measurement\":\"") + unit + "\"";
   if (*dev_class) s += String(",\"device_class\":\"") + dev_class + "\"";
@@ -116,7 +117,7 @@ void publish_sensor_config(const char* key, const char* name, const char* unit, 
 void publish_discovery() {
   publish_event_config();
   pub((String("homeassistant/button/") + uid + "/identify/config").c_str(),
-      "{" + common("identify", "Identify") + ",\"command_topic\":\"" + t_cmd +
+      "{" + common("button", "identify", "Identify") + ",\"command_topic\":\"" + t_cmd +
           "\",\"payload_press\":\"{\\\"cmd\\\":\\\"identify\\\"}\",\"device_class\":\"identify\","
           "\"entity_category\":\"config\"}",
       true);

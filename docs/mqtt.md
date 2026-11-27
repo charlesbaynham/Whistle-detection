@@ -39,7 +39,10 @@ One message per trigger, after the whistle-lab server has re-checked it:
 
 ## Discovery
 
-Retained, published on every connect and when HA sends `online`. One HA device per node (`whistle_<node>`):
+Retained, published on every connect and when HA sends `online`. One HA device per node, named after its
+hostname. Each config sets `default_entity_id`, so entity ids follow the node id, not the device name, and two
+nodes with the same hostname don't collide (needs HA 2025.10+; older HA used `object_id`). Entity ids only
+apply when an entity is first created: rename or delete an existing one in HA to pick up a change.
 
 | Entity | Topic | Notes |
 | --- | --- | --- |
