@@ -5,7 +5,9 @@ it forwards candidate clips to a whistle-lab server, which runs the full detecto
 accepts ArduinoOTA uploads.
 
 Speaker: when a trigger's verdict arrives it beeps, three rising tones for a detection, two falling for a
-rejection or failed upload. The mic is off for that ~0.7 s.
+rejection or failed upload. The mic is off for that ~0.7 s. With MQTT, a detection's beep waits for HA's
+`feedback` (docs/mqtt.md): rising = `ok`, two flat + amber = `no_action` (no automation for that pattern),
+silent = `dup` (a louder room took it), two falling = no answer within 2.5 s.
 
 LED: blue at boot, then blue brightness = mic level. Amber while a clip uploads, then 1.5 s green
 (server detected a pattern) or red (rejected, or upload failed). White while the button is held,

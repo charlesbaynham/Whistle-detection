@@ -12,6 +12,7 @@
 namespace ha {
 
 std::atomic<bool> identify_requested{false};
+std::atomic<int> feedback{NONE};
 
 namespace {
 constexpr int SCHEMA = 1;
@@ -24,7 +25,7 @@ PubSubClient mqtt(tcp);
 char node[7];            // last 3 MAC bytes, hex
 char base[24];           // whistle/<node>
 char uid[16];            // whistle_<node>
-char t_status[40], t_cmd[40], t_detection[48], t_telemetry[48], t_info[40];
+char t_status[40], t_cmd[40], t_detection[48], t_telemetry[48], t_info[40], t_feedback[48];
 
 // Event types HA has been told about. HA drops events whose type isn't in the discovery config, so a new
 // server label is added (and persisted) before its first event is published.
@@ -32,6 +33,8 @@ char types[MAX_TYPES][MAX_TYPE_LEN + 1];
 int n_types = 0;
 Preferences prefs;
 uint32_t det_seq = 0, boot_nonce = 0;
+char pending_id[16] = "";  // detection awaiting HA's feedback
+uint32_t pending_since = 0;
 
 void load_types() {
   prefs.begin("ha", false);
@@ -141,6 +144,12 @@ void on_message(char* topic, uint8_t* payload, unsigned len) {
     if (msg == "online") publish_discovery();  // HA restarted: it may have lost non-retained state
     return;
   }
+  if (!strcmp(topic, t_feedback)) {
+    if (!*pending_id || msg.indexOf(String("\"id\":\"") + pending_id + "\"") < 0) return;  // stale or not ours
+    *pending_id = 0;
+    feedback = msg.indexOf("\"ok\"") >= 0 ? OK : msg.indexOf("\"dup\"") >= 0 ? DUP : NO_ACTION;
+    return;
+  }
   if (!strcmp(topic, t_cmd)) {
     if (msg.indexOf("\"identify\"") >= 0 || msg == "identify") identify_requested = true;
     else if (msg.indexOf("\"reboot\"") >= 0 || msg == "reboot") {
@@ -166,6 +175,7 @@ void try_connect() {
   Serial.printf("mqtt: connected to %s:%d as %s\n", MQTT_HOST, MQTT_PORT, uid);
   mqtt.publish(t_status, "online", true);
   mqtt.subscribe(t_cmd, 1);
+  mqtt.subscribe(t_feedback, 1);
   mqtt.subscribe("homeassistant/status", 1);
   publish_discovery();
 }
@@ -183,6 +193,7 @@ void setup() {
   snprintf(t_cmd, sizeof t_cmd, "%s/cmd", base);
   snprintf(t_detection, sizeof t_detection, "%s/detection", base);
   snprintf(t_telemetry, sizeof t_telemetry, "%s/telemetry", base);
+  snprintf(t_feedback, sizeof t_feedback, "%s/feedback", base);
   boot_nonce = esp_random() & 0xffff;
   load_types();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
@@ -198,7 +209,14 @@ void poll() {
   if (!ENABLED || WiFi.status() != WL_CONNECTED) return;
   if (!mqtt.connected()) try_connect();
   mqtt.loop();
+  if (*pending_id && millis() - pending_since > FEEDBACK_MS) {
+    Serial.printf("mqtt: no feedback for %s\n", pending_id);
+    *pending_id = 0;
+    feedback = TIMEOUT;
+  }
 }
+
+bool awaiting_feedback() { return *pending_id; }
 
 bool connected() { return ENABLED && mqtt.connected(); }
 
@@ -224,11 +242,13 @@ void publish_detection(const Detection& d) {
   }
   const time_t now = time(nullptr);
   const uint32_t age_ms = millis() - d.detected_ms;
+  char id[16];
+  snprintf(id, sizeof id, "%04x-%u", unsigned(boot_nonce), unsigned(++det_seq));
   char b[256];
   snprintf(b, sizeof b,
-           "{\"v\":%d,\"event_type\":\"%s\",\"id\":\"%04x-%u\",\"t\":%.3f,\"age_ms\":%u,\"level\":%.1f,"
+           "{\"v\":%d,\"event_type\":\"%s\",\"id\":\"%s\",\"t\":%.3f,\"age_ms\":%u,\"level\":%.1f,"
            "\"n_notes\":%d,\"score\":",
-           SCHEMA, type, unsigned(boot_nonce), unsigned(++det_seq),
+           SCHEMA, type, id,
            now > 1600000000 ? double(now) - age_ms / 1000.0 : 0.0, unsigned(age_ms), d.level_db, d.n_notes);
   String s = b;
   s += isnan(d.score) ? String("null") : String(d.score, 1);
@@ -237,7 +257,10 @@ void publish_detection(const Detection& d) {
   s += "\",\"veto\":";
   s += d.veto ? String("\"") + json_safe(d.veto) + "\"" : String("null");
   s += ",\"intervals\":" + d.intervals + "}";
-  pub(t_detection, s, false);
+  if (pub(t_detection, s, false) && strcmp(type, "rejected")) {  // the integration ignores rejections
+    strlcpy(pending_id, id, sizeof pending_id);
+    pending_since = millis();
+  }
 }
 
 void publish_telemetry(const String& json) {

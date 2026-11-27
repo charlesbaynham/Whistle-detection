@@ -79,7 +79,7 @@ QueueHandle_t jobs;
 std::atomic<uint32_t> n_sent{0}, n_failed{0}, n_overrun{0}, n_dropped{0};
 std::atomic<int> led_result{0};          // 1 detected, -1 rejected/error
 std::atomic<uint32_t> led_result_ms{0};
-std::atomic<int> beep_result{0};         // 1 success, -1 failure: played (once) by loop()
+std::atomic<int> beep_result{0};         // a Result, played (once) by loop()
 std::atomic<bool> uploading{false};
 
 bool audio_ok = false;
@@ -183,10 +183,14 @@ bool beep(const int* freqs, int n) {
   return true;
 }
 
-// The verdict on a trigger: three rising for detected, two falling otherwise.
-bool beep_result_tones(bool ok) {
-  static const int UP[] = {1200, 1600, 2100}, DOWN[] = {1100, 750};
-  return ok ? beep(UP, 3) : beep(DOWN, 2);
+// The verdict on a trigger. With HA, a detection's verdict is HA's `feedback` (docs/mqtt.md).
+enum Result : int { FAILED = -1, NONE = 0, DETECTED = 1, NO_ACTION = 2 };
+
+// Three rising: detected (and HA acted). Two flat: HA has nothing set up for it. Two falling: rejected,
+// upload failed, or HA didn't answer.
+bool beep_result_tones(int r) {
+  static const int UP[] = {1200, 1600, 2100}, FLAT[] = {1400, 1400}, DOWN[] = {1100, 750};
+  return r == DETECTED ? beep(UP, 3) : r == NO_ACTION ? beep(FLAT, 2) : beep(DOWN, 2);
 }
 
 // ---- network ----
@@ -390,7 +394,9 @@ void net_task(void*) {
         led_result = -1;
         led_result_ms = millis();
       }
-      beep_result = ok ? led_result.load() : -1;
+      // A published detection is beeped when HA's feedback arrives (or doesn't).
+      if (!ok) beep_result = FAILED;
+      else if (!ha::awaiting_feedback()) beep_result = led_result.load();
     }
     delete j;
   }
@@ -607,11 +613,18 @@ void loop() {
     delay(10);
     return;
   }
-  if (const int r = beep_result.exchange(0)) {
+  switch (ha::feedback.exchange(ha::NONE)) {
+    case ha::OK: beep_result = DETECTED; break;
+    case ha::NO_ACTION: beep_result = NO_ACTION; break;
+    case ha::DUP: Serial.println("feedback: dup (another room heard it louder)"); break;  // stay quiet
+    case ha::TIMEOUT: beep_result = FAILED; break;
+  }
+  if (const int r = beep_result.exchange(NONE)) {
     led_result_ms = millis();
-    neopixelWrite(PIN_LED, r < 0 ? 64 : 0, r > 0 ? 64 : 0, 0);
-    audio_ok = beep_result_tones(r > 0);
-    Serial.printf("beep: %s%s\n", r > 0 ? "success" : "failure", audio_ok ? "" : ", mic did not restart");
+    neopixelWrite(PIN_LED, r == DETECTED ? 0 : 64, r == DETECTED ? 64 : r == NO_ACTION ? 32 : 0, 0);
+    audio_ok = beep_result_tones(r);
+    Serial.printf("beep: %s%s\n", r == DETECTED ? "success" : r == NO_ACTION ? "no action" : "failure",
+                  audio_ok ? "" : ", mic did not restart");
     led_result_ms = millis();  // hold the colour for its full time after the beeps
     last_read = millis();
     if (!audio_ok) return;

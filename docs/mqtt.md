@@ -16,7 +16,7 @@ All device publishes are QoS 0 (PubSubClient's only publish QoS); subscriptions 
 | `whistle/<node>/info` | dev→HA | yes | `{"v":1,"node","host","fw","ip"}` |
 | `whistle/<node>/detection` | dev→HA | no | see below; the event entity's state topic |
 | `whistle/<node>/telemetry` | dev→HA | no | the 10 s heartbeat JSON (same body the debug server gets) |
-| `whistle/<node>/feedback` | HA→dev | no | `{"v":1,"id":"<detection id>","result":"ok"\|"no_action"\|"dup"}`, from the integration; the firmware ignores it for now |
+| `whistle/<node>/feedback` | HA→dev | no | `{"v":1,"id":"<detection id>","result":"ok"\|"no_action"\|"dup"}`, from the integration, for the node's last detection; drives its beep (firmware/README.md) |
 | `whistle/<node>/cmd` | HA→dev | no | `{"cmd":"identify"}` or `{"cmd":"reboot"}` (bare `identify`/`reboot` also accepted) |
 | `homeassistant/status` | HA→dev | | `online` → node republishes discovery |
 

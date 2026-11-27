@@ -54,4 +54,4 @@ class HouseWhistle(EventEntity):
             },
         )
         self.async_write_ha_state()
-        self.hass.async_create_task(self.hub.async_feedback(verdict, self.entity_id))
+        self.hass.async_create_task(self.hub.async_feedback(verdict, self.entity_id, self._attr_event_types))

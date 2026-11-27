@@ -115,6 +115,22 @@ async def test_feedback_ok_when_an_automation_uses_it(hass, setup):
     assert feedback(setup) == {"f00001": "ok"}
 
 
+async def test_feedback_per_pattern(hass, setup):
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "automation", {"automation": {
+        "triggers": [{"trigger": "state", "entity_id": "event.whistle"}],
+        "conditions": ["{{ trigger.to_state.attributes.event_type == 'two_up' }}"],
+        "actions": [{"event": "whistled"}],
+    }})
+    online(hass, "f00001")
+    for i, etype in enumerate(["two_up", "two_up_down", "high_low_high"]):
+        setup.async_publish.reset_mock()
+        detect(hass, "f00001", 25, etype=etype, id_=f"p-{i}")
+        await hass.async_block_till_done()
+        assert feedback(setup) == {"f00001": "ok" if etype == "two_up" else "no_action"}, etype
+
+
 async def test_config_flow_single_instance(hass, mqtt_mock):
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})

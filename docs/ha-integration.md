@@ -24,8 +24,9 @@ name is the room; the firmware knows nothing about rooms.
 - Fires `event.whistle` with `event_type` = pattern name and attributes `room`, `area_id`, `room_confident`,
   `node`, `level`, `score`, `heard_by` (every node, loudest first). New pattern names are added to the
   entity's `event_types` as they appear and persisted.
-- Publishes `whistle/<node>/feedback`: `ok` to the winner when any automation references `event.whistle`
-  (not yet per pattern), else `no_action`; `dup` to every other node.
+- Publishes `whistle/<node>/feedback`: `ok` to the winner when an enabled automation on `event.whistle`
+  names the pattern anywhere in its config (or names no known pattern, i.e. a catch-all), else `no_action`;
+  `dup` to every other node. It reads the config text, so a pattern built up in a template won't count.
 
 Options (Configure on the integration): `collect_s` 1.5, `match_s` 0.4, `confident_db` 3, `max_age_s` 6.
 
@@ -49,7 +50,7 @@ the whistle came from.
 
 ## Not yet
 
-Firmware reaction to `feedback` (LED/tone), pattern library, confirmation, learning, per-node gain offsets.
+Pattern library, confirmation, learning, per-node gain offsets.
 
 ## Tests
 

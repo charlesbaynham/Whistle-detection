@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
 
 from homeassistant.components import mqtt
+from homeassistant.components.automation import DATA_COMPONENT as AUTOMATIONS
 from homeassistant.components.automation import automations_with_entity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -105,8 +107,21 @@ class WhistleHub:
         area = ar.async_get(self.hass).async_get_area(device.area_id) if device and device.area_id else None
         return Heard(d.node, area.name if area else None, area.id if area else None, d.level, d.payload.get("score"))
 
-    async def async_feedback(self, verdict: Verdict, entity_id: str) -> None:
-        result = "ok" if automations_with_entity(self.hass, entity_id) else "no_action"
+    def handled(self, event_type: str, entity_id: str, known_types: list[str]) -> bool:
+        """Whether an enabled automation on `entity_id` acts on `event_type`: one that names it, or one that
+        names no known pattern at all (a catch-all). A guess from the config text, not an evaluation."""
+        for eid in automations_with_entity(self.hass, entity_id):
+            automation = self.hass.data[AUTOMATIONS].get_entity(eid)
+            if automation is None or self.hass.states.is_state(eid, "off"):
+                continue
+            text = json.dumps(automation.raw_config or {}, default=str)
+            named = {t for t in known_types if re.search(rf"\b{re.escape(t)}\b", text)}
+            if event_type in named or not named:
+                return True
+        return False
+
+    async def async_feedback(self, verdict: Verdict, entity_id: str, known_types: list[str]) -> None:
+        result = "ok" if self.handled(verdict.event_type, entity_id, known_types) else "no_action"
         for i, d in enumerate(verdict.ranked):
             payload = json.dumps({"v": SCHEMA, "id": d.id, "result": result if i == 0 else "dup"}, separators=(",", ":"))
             await mqtt.async_publish(self.hass, f"whistle/{d.node}/feedback", payload, qos=1)

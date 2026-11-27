@@ -81,13 +81,13 @@ fetched from the add-on; MQTT carries only the manifest.
    fires `event.whistle` once.
 3. HA replies on the winner's `feedback`; others get `dup` (silent).
    - `ok` → green + rising chirp.
-   - `no_action` (no automation listens) or `error` (automation failed) → red + low tone.
+   - `no_action` (no automation listens) → amber + two flat tones; `error` (automation failed) → red + low tone.
    - `confirm_wait` (pattern has `confirm: true`) → amber pulse + prompt; a `confirm` pattern from any node
      within 5 s fires the event, else `error`.
-4. No `feedback` within 2 s → node blinks red twice ("HA not listening").
+4. No `feedback` within 2.5 s (HA's collect window is 1.5 s) → red + low tone ("HA not listening").
 
 Honest `error` comes from watching the triggered automation's result; v1 sends `ok` when an automation is
-subscribed and `no_action` otherwise. **Identify**: discovery button → `cmd: identify` → node beeps and
+that names the pattern (or names none, a catch-all) and `no_action` otherwise. **Identify**: discovery button → `cmd: identify` → node beeps and
 flashes white. An **arming whistle** (`arms: 10`) can open a window outside which only `always: true`
 patterns fire, if household false positives turn out high.
 
@@ -150,8 +150,8 @@ whistle. One node is just N = 1.
    telemetry, `level`. Milestone: a whistle toggles a light via a plain automation. *Done, confirmed on the
    board 27 Nov 2026.*
 4. **Integration v0** (option C starts): config flow, node adoption, Area mapping, dedup + room selection,
-   `event.whistle`, winner-only feedback `ok`/`no_action`; firmware LED/tone per result. *Integration side
-   built ([ha-integration.md](ha-integration.md)); firmware feedback handling and per-pattern `ok` to do.*
+   `event.whistle`, winner-only feedback `ok`/`no_action`; firmware LED/tone per result. *Built
+   ([ha-integration.md](ha-integration.md)); firmware feedback not yet tried on hardware.*
 5. **Pattern library**: typed add/delete, room scoping, retained push, NVS, version reporting, repair issue.
 6. **Room-aware blueprint**.
 7. **Confirmation** (from any node) and arming, if wanted.
