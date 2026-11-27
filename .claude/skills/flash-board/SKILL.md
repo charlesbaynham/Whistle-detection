@@ -32,14 +32,19 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 - `tailscaled` dies when the container sleeps; re-run `ts_connect.sh` (idempotent) if probes start timing out.
 - Verified 2026-11-26: kernel-mode join works in a cloud session (`/dev/net/tun` present), `tailscale ping 10.0.1.52`
   routes via openwrt-pi (DERP), and the board answers the OTA invitation with `AUTH`. Build of `atom-echo-ota` works.
-- **Verified 2026-11-26: the upload does NOT work from the tailnet as-is.** Invitation and `Authenticating...OK`
-  succeed, then `Waiting for device...` / `No response from device` after ~10 s. espota makes the board connect *back*
-  over TCP to the invitation's source address; the Pi SNATs tailnet→LAN traffic, so the board dials `10.0.1.11:<port>`
-  (the Pi) and nothing listens there. `firmware/` has no HTTP-pull OTA yet, so a push is the only route. Fixes (all need
-  a change outside the cloud session): (a) run espota from a tailnet node that sits on the LAN without SNAT, or forward
-  the port on the Pi to the session's tailnet IP (`100.64.0.10`-style address, see `tailscale ip -4`);
-  (b) disable SNAT on the Pi (`--snat-subnet-routes=false`) and add `100.64.0.0/10 via 10.0.1.11` on the board's gateway;
-  (c) HTTP-pull OTA in firmware (needs one more USB/LAN flash first). Update this section with whichever works.
+- **Verified 2026-11-27: cloud OTA works once the Pi has SNAT off.** `Result: OK` in 220 s (the upload is slow over
+  the board's Wi-Fi, ~4 min; run it in the background and watch the log). The fix is runtime state on `openwrt-pi`:
+  `ssh root@10.0.1.11 tailscale set --snat-subnet-routes=false` (persists in the tailscale state; check with
+  `tailscale debug prefs | grep NoSNAT`, expect `true`). The `nosnat` option in `/etc/config/tailscale`
+  (houseabsolute-openwrt !9) is NOT read by anything on the Pi, so it does not do this. Without it espota stalls after
+  `Authenticating...OK`: the Pi SNATs tailnet to LAN traffic, so the board dials the Pi (`10.0.1.11`) for the connect-back.
+- Side effect of SNAT off: LAN hosts whose gateway is `10.0.1.1` cannot reply to tailnet addresses, e.g. a cloud session's
+  direct `ssh root@10.0.1.3` hangs. Jump through the Pi instead: `ssh -J root@10.0.1.11 root@10.0.1.3`.
+- Board probes are flaky (about 50% loss on ping/probe, Wi-Fi power-save); retry `ota_probe.py` before concluding it is down.
+- Don't use the `workspace` CT (113) as the flash host: its Proxmox firewall drops all outbound to `10.0.0.0/16` except SSH
+  ("pivot control") and inbound by default, so neither the invitation nor the connect-back passes.
+- Check afterwards: the board reboots; `device-heartbeats.jsonl` on CT 131 (NixOS CT: use `/run/current-system/sw/bin`
+  in PATH) shows `uptime_s` restarting from 0, and HA's `sensor.whistle_echo_uptime` / `sensor.whistle_echo_*` update.
 - Setup that does work: `TS_AUTHKEY=... ts_connect.sh`, `ota_probe.py` (gets `AUTH`), `uv tool install platformio`,
   secrets.ini fetched as above. No SSH or ha-workspace needed for any of those.
 - No `/dev/net/tun`: `ts_connect.sh` falls back to userspace networking, where only processes using
