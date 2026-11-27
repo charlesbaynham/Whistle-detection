@@ -1,7 +1,8 @@
 // Whistle trigger for the ATOM Echo. The PDM mic at 16 kHz feeds a ring buffer and the v1 note-sequence detector
 // (lib/whistle_dsp). An event of >=3 notes is a trigger: its clip is POSTed with debug metadata to a whistle-lab
 // server (DEBUG_SERVER), which re-checks it with the full detector and replies with a verdict. Heartbeats go to
-// the same server every 10 s. Also joins Wi-Fi and accepts ArduinoOTA uploads.
+// the same server every 10 s. With MQTT_HOST set, checked triggers and heartbeats also go to Home Assistant over
+// MQTT (ha_mqtt.cpp, docs/mqtt.md). Also joins Wi-Fi and accepts ArduinoOTA uploads.
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
@@ -12,6 +13,7 @@
 #include <atomic>
 
 #include "detector.h"
+#include "ha_mqtt.h"
 
 namespace {
 constexpr int PIN_LED = 27;       // SK6812
@@ -29,6 +31,7 @@ constexpr float PRE_S = 0.25f, POST_S = 0.25f, MAX_CLIP_S = 4.0f;
 constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr bool HAVE_WIFI = sizeof(WIFI_SSID) > 1;
 constexpr bool HAVE_SERVER = HAVE_WIFI && sizeof(DEBUG_SERVER) > 1;
+constexpr bool HAVE_NET_TASK = HAVE_SERVER || ha::ENABLED;
 
 // ---- ring buffer: int16 at 16 kHz in 32 KB blocks (the heap's largest free block is ~110 KB) ----
 constexpr size_t BLOCK_SAMPLES = 16384;
@@ -64,6 +67,11 @@ struct Job {
   bool trigger;
   uint32_t start, end;  // sample positions (trigger)
   String json;          // trigger metadata, or the heartbeat body
+  // trigger, for MQTT
+  float level_db;  // members left out of a brace-init are zeroed
+  int n_notes;
+  String intervals;
+  uint32_t detected_ms;
 };
 QueueHandle_t jobs;
 
@@ -73,6 +81,9 @@ std::atomic<int> led_result{0};          // 1 detected, -1 rejected/error
 std::atomic<uint32_t> led_result_ms{0};
 std::atomic<int> beep_result{0};         // 1 success, -1 failure: played (once) by loop()
 std::atomic<bool> uploading{false};
+
+bool audio_ok = false;
+uint32_t last_read = 0;  // millis() at the last mic read
 
 // ---- mic ----
 bool mic_init() {
@@ -159,20 +170,23 @@ void play_tones(const int* freqs, int n) {
   i2s_driver_uninstall(MIC_PORT);
 }
 
-// Beeps the verdict on a trigger: three rising for detected, two falling otherwise. Swaps I2S0 from the mic to
-// the speaker, so nothing is recorded (and the beeps can't trigger) while this runs. Returns false if the mic
-// doesn't come back.
-bool beep_result_tones(bool ok) {
-  static const int UP[] = {1200, 1600, 2100}, DOWN[] = {1100, 750};
+// Swaps I2S0 from the mic to the speaker for the tones, then back. Nothing is recorded (and the beeps can't
+// trigger) meanwhile. Returns false if the mic doesn't come back.
+bool beep(const int* freqs, int n) {
   i2s_driver_uninstall(MIC_PORT);
-  if (ok) play_tones(UP, 3);
-  else play_tones(DOWN, 2);
+  play_tones(freqs, n);
   if (!mic_init()) return false;
   // Drop the PDM start-up transient and the room's tail of the last beep.
   int16_t junk[HOP];
   size_t got;
   for (int i = 0; i < 12; i++) i2s_read(MIC_PORT, junk, sizeof junk, &got, portMAX_DELAY);
   return true;
+}
+
+// The verdict on a trigger: three rising for detected, two falling otherwise.
+bool beep_result_tones(bool ok) {
+  static const int UP[] = {1200, 1600, 2100}, DOWN[] = {1100, 750};
+  return ok ? beep(UP, 3) : beep(DOWN, 2);
 }
 
 // ---- network ----
@@ -273,6 +287,25 @@ String http_post(const char* path, const char* content_type, size_t len, F send)
   return body;
 }
 
+// Minimal readers for the server's flat JSON reply: "" / NAN when the key is missing or null.
+String json_str(const String& s, const char* key) {
+  const String k = String("\"") + key + "\":\"";
+  const int a = s.indexOf(k);
+  if (a < 0) return "";
+  const int b = s.indexOf('"', a + k.length());
+  return b < 0 ? "" : s.substring(a + k.length(), b);
+}
+
+float json_num(const String& s, const char* key) {
+  const String k = String("\"") + key + "\":";
+  const int a = s.indexOf(k);
+  if (a < 0) return NAN;
+  const char* p = s.c_str() + a + k.length();
+  char* end;
+  const float v = strtof(p, &end);
+  return end == p ? NAN : v;
+}
+
 bool post_trigger(Job& j) {
   static const char* B = "----whistleclip";
   const uint32_t n = j.end - j.start;
@@ -315,6 +348,9 @@ bool post_trigger(Job& j) {
   if (reply.isEmpty()) return false;
   const bool detected = reply.indexOf("\"detected\":true") >= 0;
   Serial.printf("server: %s\n", reply.c_str());
+  const String label = json_str(reply, "label"), veto = json_str(reply, "veto");
+  ha::publish_detection({detected ? label.c_str() : "rejected", json_num(reply, "rho"), j.level_db, j.n_notes,
+                         j.intervals, j.detected_ms, veto.isEmpty() ? nullptr : veto.c_str()});
   led_result = detected ? 1 : -1;
   led_result_ms = millis();
   return true;
@@ -329,9 +365,17 @@ bool post_heartbeat(Job& j) {
 void net_task(void*) {
   Job* j;
   for (;;) {
-    if (xQueueReceive(jobs, &j, portMAX_DELAY) != pdTRUE) continue;
+    ha::poll();
+    // Short wait so the MQTT client is pumped between jobs.
+    if (xQueueReceive(jobs, &j, pdMS_TO_TICKS(50)) != pdTRUE) continue;
+    if (!j->trigger) ha::publish_telemetry(j->json);
+    else if (!HAVE_SERVER) {  // nothing to check it: forward the raw trigger
+      ha::publish_detection({"trigger", NAN, j->level_db, j->n_notes, j->intervals, j->detected_ms, nullptr});
+      delete j;
+      continue;
+    }
     bool ok = false;
-    if (WiFi.status() == WL_CONNECTED) {
+    if (HAVE_SERVER && WiFi.status() == WL_CONNECTED) {
       if (j->trigger) uploading = true;
       const uint32_t t0 = millis();
       ok = j->trigger ? post_trigger(*j) : post_heartbeat(*j);
@@ -353,8 +397,8 @@ void net_task(void*) {
 }
 
 void enqueue(Job* j) {
-  if (!HAVE_SERVER || xQueueSend(jobs, &j, 0) != pdTRUE) {
-    if (HAVE_SERVER) n_dropped++;
+  if (!HAVE_NET_TASK || xQueueSend(jobs, &j, 0) != pdTRUE) {
+    if (HAVE_NET_TASK) n_dropped++;
     delete j;
   }
 }
@@ -368,6 +412,7 @@ void net_init() {
   WiFi.setHostname(HOSTNAME);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  ha::setup();
 
   ArduinoOTA.setHostname(HOSTNAME);  // also advertises <HOSTNAME>.local over mDNS
   ArduinoOTA.setPassword(OTA_PASSWORD);
@@ -382,8 +427,8 @@ void net_init() {
     ESP.restart();
   });
 
-  if (HAVE_SERVER) {
-    parse_server();
+  if (HAVE_SERVER) parse_server();
+  if (HAVE_NET_TASK) {
     jobs = xQueueCreate(4, sizeof(Job*));
     xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, 1, nullptr, 0);  // loop() runs on core 1
   }
@@ -468,6 +513,17 @@ void on_event(const wd::Event& e) {
   s += b;
   snprintf(b, sizeof b, "\"uptime_s\":%lu,\"trigger_n\":%u}", millis() / 1000, unsigned(triggers_total));
   s += b;
+  j->n_notes = e.n_total;
+  j->detected_ms = millis();
+  j->intervals = "[";
+  for (int i = 0; i < e.n; i++) {
+    j->level_db = std::max(j->level_db, e.notes[i].prominence);
+    if (i) {
+      snprintf(b, sizeof b, "%s%.2f", i > 1 ? "," : "", 12 * log2f(e.notes[i].freq / e.notes[i - 1].freq));
+      j->intervals += b;
+    }
+  }
+  j->intervals += "]";
   Serial.printf("trigger #%u: %s\n", unsigned(triggers_total), s.c_str());
   enqueue(j);
 }
@@ -499,10 +555,22 @@ void heartbeat() {
   st = Stats{};
 }
 
+uint32_t identify_until_ms = 0;
+
+// HA's Identify button: three equal beeps, distinct from the verdict tones, and the LED white for 5 s.
+void identify() {
+  static const int ID[] = {1800, 1800, 1800};
+  identify_until_ms = millis() + 5000;
+  neopixelWrite(PIN_LED, 40, 40, 40);
+  audio_ok = beep(ID, 3);
+  last_read = millis();
+  Serial.printf("identify: beeped%s\n", audio_ok ? "" : ", mic did not restart");
+}
+
 void led_update(float level_dbfs) {
   const uint32_t now = millis();
   const int res = led_result.load();
-  if (digitalRead(PIN_BUTTON) == LOW) neopixelWrite(PIN_LED, 40, 40, 40);
+  if (digitalRead(PIN_BUTTON) == LOW || now < identify_until_ms) neopixelWrite(PIN_LED, 40, 40, 40);
   else if (res && now - led_result_ms.load() < 1500) neopixelWrite(PIN_LED, res < 0 ? 64 : 0, res > 0 ? 64 : 0, 0);
   else if (uploading) neopixelWrite(PIN_LED, 40, 30, 0);
   else {
@@ -513,9 +581,6 @@ void led_update(float level_dbfs) {
 }
 
 }  // namespace
-
-bool audio_ok = false;
-uint32_t last_read = 0;  // millis() at the last mic read
 
 void setup() {
   Serial.begin(115200);
@@ -536,6 +601,7 @@ void setup() {
 
 void loop() {
   net_poll();
+  if (ha::identify_requested.exchange(false)) identify();
   if (!audio_ok) {  // keep OTA alive and show the fault
     neopixelWrite(PIN_LED, millis() / 500 % 2 ? 64 : 0, 0, 0);
     delay(10);
