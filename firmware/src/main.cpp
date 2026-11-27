@@ -20,6 +20,8 @@ constexpr int PIN_LED = 27;       // SK6812
 constexpr int PIN_BUTTON = 39;    // active low, external pull-up
 constexpr int PIN_MIC_CLK = 33;   // shared with speaker LRCK: mic and speaker can't run together
 constexpr int PIN_MIC_DATA = 23;
+constexpr int PIN_SPK_BCLK = 19;  // NS4168 amp; its LRCK is PIN_MIC_CLK
+constexpr int PIN_SPK_DATA = 22;
 constexpr i2s_port_t MIC_PORT = I2S_NUM_0;  // PDM RX only exists on I2S0
 constexpr uint32_t SAMPLE_RATE = wd::FS;
 constexpr int HOP = wd::HOP, NFFT = wd::NFFT;
@@ -30,7 +32,6 @@ constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr bool HAVE_WIFI = sizeof(WIFI_SSID) > 1;
 constexpr bool HAVE_SERVER = HAVE_WIFI && sizeof(DEBUG_SERVER) > 1;
 constexpr bool HAVE_NET_TASK = HAVE_SERVER || ha::ENABLED;
-constexpr int PIN_SPK_BCLK = 19, PIN_SPK_DATA = 22;  // NS4168; LRCK is PIN_MIC_CLK
 
 // ---- ring buffer: int16 at 16 kHz in 32 KB blocks (the heap's largest free block is ~110 KB) ----
 constexpr size_t BLOCK_SAMPLES = 16384;
@@ -78,9 +79,11 @@ QueueHandle_t jobs;
 std::atomic<uint32_t> n_sent{0}, n_failed{0}, n_overrun{0}, n_dropped{0};
 std::atomic<int> led_result{0};          // 1 detected, -1 rejected/error
 std::atomic<uint32_t> led_result_ms{0};
+std::atomic<int> beep_result{0};         // 1 success, -1 failure: played (once) by loop()
 std::atomic<bool> uploading{false};
 
 bool audio_ok = false;
+uint32_t last_read = 0;  // millis() at the last mic read
 
 // ---- mic ----
 bool mic_init() {
@@ -105,6 +108,85 @@ bool mic_init() {
   if (e == ESP_OK) e = i2s_set_pin(MIC_PORT, &pins);
   if (e != ESP_OK) Serial.printf("mic init failed: %s\n", esp_err_to_name(e));
   return e == ESP_OK;
+}
+
+// ---- speaker ----
+// Square-ish loudness is set here; the little speaker is easily overdriven, so stay well below full scale.
+constexpr float BEEP_AMPLITUDE = 6000;
+constexpr int BEEP_MS = 90, GAP_MS = 50;
+constexpr int SPK_DMA_BUFS = 4, SPK_DMA_LEN = 256;  // frames
+
+// Plays the tones (Hz) and returns once they are out of the speaker. The mic must be uninstalled.
+void play_tones(const int* freqs, int n) {
+  const i2s_config_t cfg = {
+      .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
+      .sample_rate = SAMPLE_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+      .intr_alloc_flags = 0,
+      .dma_buf_count = SPK_DMA_BUFS,
+      .dma_buf_len = SPK_DMA_LEN,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+  };
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num = I2S_PIN_NO_CHANGE;
+  pins.bck_io_num = PIN_SPK_BCLK;
+  pins.ws_io_num = PIN_MIC_CLK;
+  pins.data_out_num = PIN_SPK_DATA;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+  esp_err_t e = i2s_driver_install(MIC_PORT, &cfg, 0, nullptr);
+  if (e != ESP_OK) {
+    Serial.printf("speaker init failed: %s\n", esp_err_to_name(e));
+    return;
+  }
+  e = i2s_set_pin(MIC_PORT, &pins);
+  if (e == ESP_OK) {
+    int16_t buf[2 * 128];
+    int fill = 0;
+    size_t written;
+    auto put = [&](int16_t v) {
+      buf[fill++] = v;
+      buf[fill++] = v;
+      if (fill == int(sizeof buf / sizeof *buf)) {
+        i2s_write(MIC_PORT, buf, sizeof buf, &written, portMAX_DELAY);
+        fill = 0;
+      }
+    };
+    constexpr int N = SAMPLE_RATE * BEEP_MS / 1000, RAMP = SAMPLE_RATE * 5 / 1000;
+    for (int t = 0; t < n; t++) {
+      for (int i = 0; i < N; i++) {
+        const float env = std::min(1.f, std::min(i, N - 1 - i) / float(RAMP));  // no clicks
+        put(int16_t(BEEP_AMPLITUDE * env * sinf(2 * float(M_PI) * freqs[t] * i / SAMPLE_RATE)));
+      }
+      for (int i = 0; i < SAMPLE_RATE * GAP_MS / 1000; i++) put(0);
+    }
+    // i2s_write returns when data is queued: push the tones out of the DMA with a ring's worth of silence.
+    for (int i = 0; i < SPK_DMA_BUFS * SPK_DMA_LEN + 128; i++) put(0);
+  } else {
+    Serial.printf("speaker pins failed: %s\n", esp_err_to_name(e));
+  }
+  i2s_driver_uninstall(MIC_PORT);
+}
+
+// Swaps I2S0 from the mic to the speaker for the tones, then back. Nothing is recorded (and the beeps can't
+// trigger) meanwhile. Returns false if the mic doesn't come back.
+bool beep(const int* freqs, int n) {
+  i2s_driver_uninstall(MIC_PORT);
+  play_tones(freqs, n);
+  if (!mic_init()) return false;
+  // Drop the PDM start-up transient and the room's tail of the last beep.
+  int16_t junk[HOP];
+  size_t got;
+  for (int i = 0; i < 12; i++) i2s_read(MIC_PORT, junk, sizeof junk, &got, portMAX_DELAY);
+  return true;
+}
+
+// The verdict on a trigger: three rising for detected, two falling otherwise.
+bool beep_result_tones(bool ok) {
+  static const int UP[] = {1200, 1600, 2100}, DOWN[] = {1100, 750};
+  return ok ? beep(UP, 3) : beep(DOWN, 2);
 }
 
 // ---- network ----
@@ -308,6 +390,7 @@ void net_task(void*) {
         led_result = -1;
         led_result_ms = millis();
       }
+      beep_result = ok ? led_result.load() : -1;
     }
     delete j;
   }
@@ -474,51 +557,14 @@ void heartbeat() {
 
 uint32_t identify_until_ms = 0;
 
-// Three short beeps on the speaker. The speaker shares GPIO33 and I2S0 with the mic, so the mic is torn down
-// for ~1 s and the detector sees a gap.
+// HA's Identify button: three equal beeps, distinct from the verdict tones, and the LED white for 5 s.
 void identify() {
+  static const int ID[] = {1800, 1800, 1800};
   identify_until_ms = millis() + 5000;
   neopixelWrite(PIN_LED, 40, 40, 40);
-  i2s_driver_uninstall(MIC_PORT);
-  constexpr uint32_t RATE = 16000;
-  const i2s_config_t cfg = {
-      .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
-      .sample_rate = RATE,
-      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-      .intr_alloc_flags = 0,
-      .dma_buf_count = 4,
-      .dma_buf_len = 256,
-      .use_apll = false,
-      .tx_desc_auto_clear = true,
-  };
-  i2s_pin_config_t pins = {};
-  pins.mck_io_num = I2S_PIN_NO_CHANGE;
-  pins.bck_io_num = PIN_SPK_BCLK;
-  pins.ws_io_num = PIN_MIC_CLK;
-  pins.data_out_num = PIN_SPK_DATA;
-  pins.data_in_num = I2S_PIN_NO_CHANGE;
-  esp_err_t e = i2s_driver_install(MIC_PORT, &cfg, 0, nullptr);
-  if (e == ESP_OK) e = i2s_set_pin(MIC_PORT, &pins);
-  if (e == ESP_OK) {
-    int16_t buf[2 * 160];  // 10 ms stereo
-    size_t wrote;
-    for (int beep = 0; beep < 3; beep++) {
-      for (int k = 0; k < 30; k++) {  // 150 ms tone, then 150 ms silence
-        for (int i = 0; i < 160; i++) {
-          const int16_t v = k < 15 ? int16_t(6000 * sinf(2 * PI * 2000 * (k * 160 + i) / RATE)) : 0;
-          buf[2 * i] = buf[2 * i + 1] = v;
-        }
-        i2s_write(MIC_PORT, buf, sizeof buf, &wrote, portMAX_DELAY);
-      }
-    }
-    i2s_zero_dma_buffer(MIC_PORT);
-    delay(50);
-  } else Serial.printf("speaker init failed: %s\n", esp_err_to_name(e));
-  i2s_driver_uninstall(MIC_PORT);
-  audio_ok = mic_init();
-  Serial.printf("identify: beeped, mic %s\n", audio_ok ? "back up" : "FAILED");
+  audio_ok = beep(ID, 3);
+  last_read = millis();
+  Serial.printf("identify: beeped%s\n", audio_ok ? "" : ", mic did not restart");
 }
 
 void led_update(float level_dbfs) {
@@ -550,6 +596,7 @@ void setup() {
                 audio_ok ? "mic up" : "AUDIO DISABLED", float(ring_len) / SAMPLE_RATE, n_blocks,
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   det_start = write_pos.load();
+  last_read = millis();
 }
 
 void loop() {
@@ -560,9 +607,17 @@ void loop() {
     delay(10);
     return;
   }
+  if (const int r = beep_result.exchange(0)) {
+    led_result_ms = millis();
+    neopixelWrite(PIN_LED, r < 0 ? 64 : 0, r > 0 ? 64 : 0, 0);
+    audio_ok = beep_result_tones(r > 0);
+    Serial.printf("beep: %s%s\n", r > 0 ? "success" : "failure", audio_ok ? "" : ", mic did not restart");
+    led_result_ms = millis();  // hold the colour for its full time after the beeps
+    last_read = millis();
+    if (!audio_ok) return;
+  }
   size_t got = 0;
   i2s_read(MIC_PORT, hop_buf, sizeof(hop_buf), &got, portMAX_DELAY);
-  static uint32_t last_read = millis();
   const uint32_t gap = millis() - last_read;
   last_read += gap;
   st.loop_gap_ms_max = std::max(st.loop_gap_ms_max, gap);
