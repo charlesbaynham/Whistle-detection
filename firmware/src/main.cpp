@@ -186,11 +186,12 @@ bool beep(const int* freqs, int n) {
 // The verdict on a trigger. With HA, a detection's verdict is HA's `feedback` (docs/mqtt.md).
 enum Result : int { FAILED = -1, NONE = 0, DETECTED = 1, NO_ACTION = 2 };
 
-// Three rising: detected (and HA acted). Two flat: HA has nothing set up for it. Two falling: rejected,
-// upload failed, or HA didn't answer.
+// Three rising: detected (and HA acted). Two flat: HA has nothing set up for it. FAILED (rejected, upload
+// failed, or HA didn't answer) is silent: LED only.
 bool beep_result_tones(int r) {
-  static const int UP[] = {1200, 1600, 2100}, FLAT[] = {1400, 1400}, DOWN[] = {1100, 750};
-  return r == DETECTED ? beep(UP, 3) : r == NO_ACTION ? beep(FLAT, 2) : beep(DOWN, 2);
+  static const int UP[] = {1200, 1600, 2100}, FLAT[] = {1400, 1400};
+  if (r == FAILED) return true;
+  return r == DETECTED ? beep(UP, 3) : beep(FLAT, 2);
 }
 
 // ---- network ----
