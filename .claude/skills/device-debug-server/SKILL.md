@@ -11,7 +11,7 @@ For testing, that is the laptop running whistle-lab.
 ## Templates: copy the datasets from the deployed server
 
 The deployed app (`https://whistle.i.houseabsolute.co.uk`, LAN/tailnet only, no SSO since 2026-11-26) can
-receive device uploads directly (`debug_server = https://whistle.i.houseabsolute.co.uk`). To copy its datasets, use SSH. The data is on CT 131 at `/data/whistle/<dataset>/`, reachable via the Proxmox host.
+receive device uploads directly (`debug_server = http://whistle.i.houseabsolute.co.uk`; not https). To copy its datasets, use SSH. The data is on CT 131 at `/data/whistle/<dataset>/`, reachable via the Proxmox host.
 Read-only. Use the lab SSH key from the secret server (`get_lab_ssh_key`, the `fetching-secrets` skill in
 `~/ha-workspace`). Load it into a throwaway agent, not `~/.ssh` (that is the user's own config):
 
