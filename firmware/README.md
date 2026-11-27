@@ -28,8 +28,8 @@ plain-HTTP server 4 fit, 4.1 s, leaving ~80 KB free; with `https://` only 3, 3.1
 handshake takes ~60 KB). On a trigger, the
 clip from 0.25 s before the first note to 0.25 s after the last (capped at 4 s) is streamed from the
 ring, without a copy, by a network task on core 0. The mic never stops. If the writer laps the upload,
-the clip is flagged `overrun`. Over HTTPS a request takes ~1.1–1.4 s, so long clips are expected to
-overrun (not yet measured with real triggers).
+the clip is flagged `overrun`. Do not use `https://` for now: heartbeats succeed but clip uploads stall
+and fail for lack of memory (seen 2026-11-27).
 
 ## Debug server
 
