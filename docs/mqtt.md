@@ -1,9 +1,9 @@
 # MQTT protocol (schema v1, option A)
 
 What the firmware (`firmware/src/ha_mqtt.cpp`) and the simulator (`tools/fake_node.py`) speak today.
-This is option A of [ha-integration-plan.md](ha-integration-plan.md): MQTT discovery only, no custom
-integration yet. Topics planned for option C (`feedback`, `learn`, `whistle/patterns`, ...) are listed in the
-plan and are not implemented.
+Option A of [ha-integration-plan.md](ha-integration-plan.md) (MQTT discovery) plus the `feedback` topic that
+the custom integration ([ha-integration.md](ha-integration.md)) sends. Other option C topics (`learn`,
+`whistle/patterns`, ...) are in the plan and not implemented.
 
 Node id = last 3 bytes of the Wi-Fi MAC in hex (`a1b2c3`); simulated nodes use `f00001`, `f00002`, ....
 All device publishes are QoS 0 (PubSubClient's only publish QoS); subscriptions are QoS 1.
@@ -16,6 +16,7 @@ All device publishes are QoS 0 (PubSubClient's only publish QoS); subscriptions 
 | `whistle/<node>/info` | dev→HA | yes | `{"v":1,"node","host","fw","ip"}` |
 | `whistle/<node>/detection` | dev→HA | no | see below; the event entity's state topic |
 | `whistle/<node>/telemetry` | dev→HA | no | the 10 s heartbeat JSON (same body the debug server gets) |
+| `whistle/<node>/feedback` | HA→dev | no | `{"v":1,"id":"<detection id>","result":"ok"\|"no_action"\|"dup"}`, from the integration; the firmware ignores it for now |
 | `whistle/<node>/cmd` | HA→dev | no | `{"cmd":"identify"}` or `{"cmd":"reboot"}` (bare `identify`/`reboot` also accepted) |
 | `homeassistant/status` | HA→dev | | `online` → node republishes discovery |
 
@@ -54,6 +55,9 @@ HA drops events whose type isn't declared, so on a new label the node adds it to
 most 16), republishes the event config, waits 0.5 s, then publishes the event.
 
 ## Using it in HA
+
+With the integration installed, trigger on the house-wide `event.whistle` instead
+([ha-integration.md](ha-integration.md)). Without it, per node:
 
 ```yaml
 triggers:

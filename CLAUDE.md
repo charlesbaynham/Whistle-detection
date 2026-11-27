@@ -11,9 +11,10 @@ False-positive rejection is the priority.
   (`firmware/lib/whistle_dsp`, a port of `notes.device_events`) and uploads clips; the server re-checks them.
 - Home Assistant: MQTT. Plan (accepted 27 Nov 2026) in `docs/ha-integration-plan.md`; wire format in
   `docs/mqtt.md`. Option A is built: the device does MQTT discovery (per-node event entity, Identify button,
-  diagnostic sensors) from `firmware/src/ha_mqtt.cpp`. Next is option C, a custom integration
-  (`custom_components/whistle`) for dedup across rooms, feedback, pattern library. Design for several room
-  nodes throughout. `tools/fake_node.py` simulates nodes on a broker.
+  diagnostic sensors) from `firmware/src/ha_mqtt.cpp`. Option C has started: the custom integration
+  `custom_components/whistle` (docs/ha-integration.md) dedups across rooms into `event.whistle` and sends
+  feedback; pattern library etc. next. Design for several room nodes throughout. `tools/fake_node.py`
+  simulates nodes on a broker. HA tests live in `tests_ha/` with their own requirements (not `uv sync`).
 - Firmware updates: USB once, then ArduinoOTA over the LAN (HTTP pull OTA later for many nodes).
 
 ## Working here

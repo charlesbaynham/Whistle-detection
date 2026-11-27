@@ -147,9 +147,11 @@ whistle. One node is just N = 1.
 2. **Fake nodes** (`tools/fake_node.py`): N nodes reporting the same detection at different levels, to build
    HA logic without hardware.
 3. **Firmware MQTT layer** (option A): connect, LWT, discovery for event/button/sensors, identify,
-   telemetry, `level`. Milestone: a whistle toggles a light via a plain automation.
+   telemetry, `level`. Milestone: a whistle toggles a light via a plain automation. *Done, confirmed on the
+   board 27 Nov 2026.*
 4. **Integration v0** (option C starts): config flow, node adoption, Area mapping, dedup + room selection,
-   `event.whistle`, winner-only feedback `ok`/`no_action`; firmware LED/tone per result.
+   `event.whistle`, winner-only feedback `ok`/`no_action`; firmware LED/tone per result. *Integration side
+   built ([ha-integration.md](ha-integration.md)); firmware feedback handling and per-pattern `ok` to do.*
 5. **Pattern library**: typed add/delete, room scoping, retained push, NVS, version reporting, repair issue.
 6. **Room-aware blueprint**.
 7. **Confirmation** (from any node) and arming, if wanted.

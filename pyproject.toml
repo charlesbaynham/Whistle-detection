@@ -26,3 +26,6 @@ dev = ["pytest>=8", "httpx>=0.27", "numpy>=1.26"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]  # tests_ha/ needs Home Assistant; see .github/workflows/ha.yml

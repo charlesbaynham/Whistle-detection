@@ -22,6 +22,7 @@ import threading
 import time
 
 SCHEMA = 1
+BOOT_NONCE = f"{random.getrandbits(16):04x}"  # as the firmware: ids stay unique across restarts
 BASE_TYPES = ["rejected", "trigger"]
 MAX_PAYLOAD = 1536  # firmware's PubSubClient buffer, header included
 
@@ -32,7 +33,7 @@ def node_ids(n: int) -> list[str]:
 
 def topics(node: str) -> dict[str, str]:
     base = f"whistle/{node}"
-    return {k: f"{base}/{k}" for k in ("status", "info", "cmd", "detection", "telemetry")}
+    return {k: f"{base}/{k}" for k in ("status", "info", "cmd", "detection", "telemetry", "feedback")}
 
 
 def device(node: str) -> dict:
@@ -109,7 +110,7 @@ def detection(seq: int, label: str, level: float, score: float | None, intervals
     return {
         "v": SCHEMA,
         "event_type": sanitize(label),
-        "id": f"fake-{seq}",
+        "id": f"{BOOT_NONCE}-{seq}",
         "t": round(time.time(), 3),
         "age_ms": 0,
         "level": round(level, 1),
@@ -162,6 +163,7 @@ class FakeNode:
     def _on_connect(self, c, userdata, flags, rc, props=None):
         self._pub(self.t["status"], "online", retain=True)
         c.subscribe(self.t["cmd"], qos=1)
+        c.subscribe(self.t["feedback"], qos=1)
         c.subscribe("homeassistant/status", qos=1)
         self.publish_discovery()
         print(f"[{self.node}] connected")
@@ -172,6 +174,8 @@ class FakeNode:
             self.publish_discovery()
         elif msg.topic == self.t["cmd"]:
             print(f"[{self.node}] cmd {body} -> {'BEEP BEEP BEEP' if 'identify' in body else 'ignored'}")
+        elif msg.topic == self.t["feedback"]:
+            print(f"[{self.node}] feedback {body}")
 
     def report(self, label: str, level: float, score: float | None, intervals: list[float]):
         etype = sanitize(label)
