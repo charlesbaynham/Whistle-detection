@@ -42,6 +42,15 @@ overrun (not yet measured with real triggers).
 Serial prints one line per note, event, trigger, server reply and heartbeat. How to run the server:
 `.claude/skills/device-debug-server/SKILL.md`.
 
+## Home Assistant (MQTT)
+
+With `mqtt_host` set in `secrets.ini`, `src/ha_mqtt.cpp` connects to the broker (plain TCP, LWT on
+`whistle/<node>/status`), registers the node with HA by MQTT discovery and publishes one event per checked
+trigger: the server's label, or `rejected`. Without a `debug_server` it sends every ≥3-note trigger as
+`trigger`. Heartbeats also go to `whistle/<node>/telemetry` and feed diagnostic sensors. The Identify button
+beeps 3 times on the speaker (the mic is off for ~1 s, since they share I2S0 and GPIO33) and holds the LED
+white for 5 s. Protocol: `../docs/mqtt.md`. Give each node its own broker user.
+
 ## Pins
 
 | Function        | GPIO | Notes                                         |
