@@ -63,8 +63,14 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 The shared copy is the Secret Server entry `whistle_secrets_ini` (base64 of the whole file): fetch it
 with `get_whistle_secrets_ini` and `house-absolute:fetching-secrets`, and decrypt only into
 `firmware/secrets.ini` as in "Cloud OTA" step 3. Its `debug_server` is the deployed server,
-`https://whistle.i.houseabsolute.co.uk` (since 2026-11-26; the firmware needs HTTPS support, #15, so flash
-current `main`). To use a laptop debug server instead, override that line locally.
+`http://whistle.i.houseabsolute.co.uk` (plain HTTP on purpose: over TLS the board's clip uploads fail for
+lack of memory; the ingress serves `/api/device/` on port 80, homelab-infra#235). To use a laptop debug
+server instead, override that line locally.
+
+To flash a powered board from the home LAN: write `secrets.ini` as above, run
+`pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52`, then delete `secrets.ini`. It needs only
+power and Wi-Fi, no USB data. Without serial, check that the server's `device-heartbeats.jsonl` (CT 131,
+`/data/whistle/`) gains lines with the new `fw`.
 
 Whenever `secrets.ini` changes, store it again (from a machine with lab SSH access):
 
@@ -98,7 +104,7 @@ the first upload: `pio run -e atom-echo -t erase`. To restore, run the same espt
 cd firmware
 pio device list                      # ATOM shows as /dev/ttyUSB* or /dev/ttyACM* (macOS: /dev/cu.usbserial-*)
 pio run -e atom-echo -t upload       # auto-detects the port; add --upload-port /dev/ttyUSB0 if several
-pio device monitor -e atom-echo      # expect "whistle-fw <rev>: mic up, ring 3.07 s ..." (4.10 s with plain HTTP),
+pio device monitor -e atom-echo      # expect "whistle-fw <rev>: mic up, ring 4.10 s ..." (3.07 s with https),
                                      # "wifi up: <ip>, OTA at <host>.local, server ...", then "net: heartbeat ok" every 10 s
 ```
 
