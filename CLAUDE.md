@@ -9,8 +9,11 @@ False-positive rejection is the priority.
 - `firmware/`: PlatformIO project for the M5Stack ATOM Echo (ESP32-PICO-D4, 4 MB flash, no PSRAM,
   PDM mic). See `firmware/README.md` for pins and build. The device runs a cheap ≥3-note trigger
   (`firmware/lib/whistle_dsp`, a port of `notes.device_events`) and uploads clips; the server re-checks them.
-- Home Assistant integration (planned, not built): MQTT over Wi-Fi. Device publishes detections;
-  HA sends back ok/error feedback, beep-to-identify, and add/delete-pattern commands.
+- Home Assistant: MQTT. Plan (accepted 27 Nov 2026) in `docs/ha-integration-plan.md`; wire format in
+  `docs/mqtt.md`. Option A is built: the device does MQTT discovery (per-node event entity, Identify button,
+  diagnostic sensors) from `firmware/src/ha_mqtt.cpp`. Next is option C, a custom integration
+  (`custom_components/whistle`) for dedup across rooms, feedback, pattern library. Design for several room
+  nodes throughout. `tools/fake_node.py` simulates nodes on a broker.
 - Firmware updates: USB once, then ArduinoOTA over the LAN (HTTP pull OTA later for many nodes).
 
 ## Working here
@@ -33,5 +36,6 @@ found it wrong or incomplete, fix the skill in the same PR. Current skills:
   session (joins the house tailnet; board is at fixed IP 10.0.1.52).
 - `device-debug-server`: run whistle-lab on the laptop to receive device triggers and heartbeats.
 - `port-detector-stage`: move detector code from Python to `firmware/lib/whistle_dsp` with a comparison test.
+- `mqtt-check`: test the MQTT/HA link with a local broker or simulated nodes, without a board.
 
-Likely future skills: capturing audio from the device for the dataset, HA integration checks.
+Likely future skills: capturing audio from the device for the dataset.
