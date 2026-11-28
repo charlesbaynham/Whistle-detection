@@ -17,7 +17,8 @@ All device publishes are QoS 0 (PubSubClient's only publish QoS); subscriptions 
 | `whistle/<node>/detection` | dev→HA | no | see below; the event entity's state topic |
 | `whistle/<node>/telemetry` | dev→HA | no | the 10 s heartbeat JSON (same body the debug server gets) |
 | `whistle/<node>/feedback` | HA→dev | no | `{"v":1,"id":"<detection id>","result":"ok"\|"no_action"\|"dup"}`, from the integration, for the node's last detection; drives its beep (firmware/README.md) |
-| `whistle/<node>/cmd` | HA→dev | no | `{"cmd":"identify"}` or `{"cmd":"reboot"}` (bare `identify`/`reboot` also accepted) |
+| `whistle/<node>/cmd` | HA→dev | no | `{"cmd":"identify"}`, `{"cmd":"reboot"}` (bare `identify`/`reboot` also accepted), `{"cmd":"debug_on"}` / `{"cmd":"debug_off"}` ([debug-stream.md](debug-stream.md)) |
+| `whistle/<node>/debug` | dev→HA | yes | `ON` / `OFF`: debug mode, the state of the debug switch; republished on every connect |
 | `homeassistant/status` | HA→dev | | `online` → node republishes discovery |
 
 ## Detection
@@ -49,6 +50,7 @@ apply when an entity is first created: rename or delete an existing one in HA to
 | --- | --- | --- |
 | `event.whistle_<node>_whistle` | `homeassistant/event/whistle_<node>/whistle/config` | `event_types` = `rejected`, `trigger`, plus every label seen so far |
 | `button.whistle_<node>_identify` | `homeassistant/button/whistle_<node>/identify/config` | presses send `{"cmd":"identify"}`: 3 beeps + white LED for 5 s |
+| `switch.whistle_<node>_debug_stream` | `homeassistant/switch/whistle_<node>/debug_stream/config` | debug mode ([debug-stream.md](debug-stream.md)): detection off, all audio streamed to the server; reverts after 10 min |
 | `sensor.whistle_<node>_{rssi,heap,uptime_s,level_dbfs,band_median_db}` | `homeassistant/sensor/whistle_<node>/<key>/config` | diagnostic, from `telemetry`, expire after 45 s |
 
 HA drops events whose type isn't declared, so on a new label the node adds it to its list (kept in NVS, at

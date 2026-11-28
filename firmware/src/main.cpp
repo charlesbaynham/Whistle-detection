@@ -1,7 +1,8 @@
 // Whistle trigger for the ATOM Echo. The PDM mic at 16 kHz feeds a ring buffer and the v1 note-sequence detector
 // (lib/whistle_dsp). An event of >=3 notes is a trigger: its clip is POSTed with debug metadata to a whistle-lab
 // server (DEBUG_SERVER), which re-checks it with the full detector and replies with a verdict. Heartbeats go to
-// the same server every 10 s. With MQTT_HOST set, checked triggers and heartbeats also go to Home Assistant over
+// the same server every 10 s. Debug mode (HA switch, docs/debug-stream.md): detection off, all audio streamed to the
+// server for DEBUG_TIMEOUT_MS. With MQTT_HOST set, checked triggers and heartbeats also go to Home Assistant over
 // MQTT (ha_mqtt.cpp, docs/mqtt.md). Also joins Wi-Fi and accepts ArduinoOTA uploads.
 #include <Arduino.h>
 #include <ArduinoOTA.h>
@@ -31,6 +32,8 @@ constexpr int HOP = wd::HOP, NFFT = wd::NFFT;
 constexpr int MIN_NOTES = 3;           // notes.Params.min_notes_to_forward
 constexpr float PRE_S = 0.25f, POST_S = 0.25f, MAX_CLIP_S = 4.0f;
 constexpr uint32_t HEARTBEAT_MS = 10000;
+constexpr uint32_t DEBUG_TIMEOUT_MS = 10 * 60 * 1000;  // debug mode reverts to normal operation after this
+constexpr int DEBUG_FRAME_SAMPLES = 1024;
 constexpr bool HAVE_WIFI = sizeof(WIFI_SSID) > 1;
 constexpr bool HAVE_SERVER = HAVE_WIFI && sizeof(DEBUG_SERVER) > 1;
 constexpr bool HAVE_NET_TASK = HAVE_SERVER || ha::ENABLED;
@@ -83,6 +86,11 @@ std::atomic<int> led_result{0};          // 1 detected, -1 rejected/error
 std::atomic<uint32_t> led_result_ms{0};
 std::atomic<int> beep_result{0};         // a Result, played (once) by loop()
 std::atomic<bool> uploading{false};
+
+// Debug mode: ha::debug_active is the mode (owned by loop()); the generation tells the network task a new
+// session began, `debug_start` is the first sample to stream.
+std::atomic<uint32_t> debug_gen{0}, debug_start{0}, debug_deadline{0};
+std::atomic<bool> debug_streaming{false};  // the network task has a live connection to the server
 
 bool audio_ok = false;
 uint32_t last_read = 0;  // millis() at the last mic read
@@ -277,6 +285,21 @@ bool read_response(WiFiClient& c, String& head, String& body, uint32_t timeout_m
   return body_len < 0 || int(body.length()) >= body_len;
 }
 
+// Connects to the server over `plain` or `tls` and returns whichever was used, or nullptr.
+WiFiClient* connect_server(WiFiClientSecure& tls, WiFiClient& plain, const char* what) {
+  // No certificate check: the server is on the LAN and the clips are not secret. TLS here is only to get past
+  // the reverse proxy, which redirects plain HTTP to HTTPS.
+  tls.setInsecure();
+  WiFiClient& c = server_tls ? static_cast<WiFiClient&>(tls) : plain;
+  c.setTimeout(5);  // seconds, for socket sends
+  const bool up = server_tls ? tls.connect(server_host, server_port, 8000) : plain.connect(server_host, server_port, 3000);
+  if (!up) {
+    Serial.printf("%s: connect to %s:%u failed\n", what, server_host, server_port);
+    return nullptr;
+  }
+  return &c;
+}
+
 // Sends a request whose body is written by `send` (exactly `len` bytes; none for a GET) and returns the
 // response body, or "" on failure.
 template <typename F>
@@ -285,16 +308,9 @@ String http_request(const char* method, const char* path, const char* content_ty
   static const String token_header = sizeof(DEVICE_TOKEN) > 1 ? String("X-Whistle-Token: " DEVICE_TOKEN "\r\n") : String();
   WiFiClientSecure tls;
   WiFiClient plain;
-  // No certificate check: the server is on the LAN and the clips are not secret. TLS here is only to get past
-  // the reverse proxy, which redirects plain HTTP to HTTPS.
-  tls.setInsecure();
-  WiFiClient& c = server_tls ? static_cast<WiFiClient&>(tls) : plain;
-  c.setTimeout(5);  // seconds, for socket sends
-  const bool up = server_tls ? tls.connect(server_host, server_port, 8000) : plain.connect(server_host, server_port, 3000);
-  if (!up) {
-    Serial.printf("%s: connect to %s:%u failed\n", path, server_host, server_port);
-    return "";
-  }
+  WiFiClient* conn = connect_server(tls, plain, path);
+  if (!conn) return "";
+  WiFiClient& c = *conn;
   c.printf("%s %s HTTP/1.1\r\nHost: %s\r\n%sContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
            method, path, host_hdr, token_header.c_str(), content_type, unsigned(len));
   if (!send(c)) return "";
@@ -431,11 +447,113 @@ bool post_heartbeat(Job& j) {
           }).isEmpty();
 }
 
+// ---- debug stream ----
+// Frames are `<IIIH` (seq, sample position, device millis, n) + n int16, each sent as one HTTP chunk
+// (src/whistle_lab/stream.py). The ring buffer is the stall buffer: if the link stalls for longer than the ring
+// holds, the cursor jumps ahead and the position field shows the gap.
+bool debug_running(uint32_t gen) { return ha::debug_active.load() && debug_gen.load() == gen; }
+
+// Heartbeats still feed the HA sensors; triggers can't occur in debug mode.
+void drain_jobs() {
+  Job* j;
+  while (xQueueReceive(jobs, &j, 0) == pdTRUE) {
+    if (!j->trigger) ha::publish_telemetry(j->json);
+    delete j;
+  }
+}
+
+void pump(uint32_t ms) {
+  for (const uint32_t t0 = millis(); millis() - t0 < ms;) {
+    ha::poll();
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+void stream_session(uint32_t gen, uint32_t& cursor, uint32_t& seq) {
+  static const String token_header = sizeof(DEVICE_TOKEN) > 1 ? String("X-Whistle-Token: " DEVICE_TOKEN "\r\n") : String();
+  WiFiClientSecure tls;
+  WiFiClient plain;
+  WiFiClient* conn = connect_server(tls, plain, "debug stream");
+  if (!conn) return;
+  WiFiClient& c = *conn;
+  c.printf("POST /api/device/stream HTTP/1.1\r\nHost: %s\r\n%sX-Whistle-Host: " HOSTNAME "\r\nX-Whistle-Fw: " GIT_REV
+           "\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+           host_hdr, token_header.c_str());
+  debug_streaming = true;
+  Serial.printf("debug stream: connected, from sample %u\n", unsigned(cursor));
+
+  constexpr int BODY = 8;  // fixed offset of the frame in `out`: keeps the int16 samples aligned
+  alignas(4) static uint8_t out[BODY + 14 + 2 * DEBUG_FRAME_SAMPLES + 2];
+  bool ok = true;
+  while (ok && debug_running(gen)) {
+    ha::poll();
+    drain_jobs();
+    const uint32_t avail = write_pos.load() - cursor;
+    if (avail > ring_len - 2 * HOP) {  // the writer is about to lap us (or has)
+      cursor = write_pos.load() - ring_len / 2;
+      n_overrun++;
+      continue;
+    }
+    if (avail < DEBUG_FRAME_SAMPLES / 2) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    const uint32_t m = std::min<uint32_t>(avail, DEBUG_FRAME_SAMPLES);
+    const uint32_t len = 14 + 2 * m;
+    char size_line[8];
+    const int sl = snprintf(size_line, sizeof size_line, "%x\r\n", unsigned(len));
+    uint8_t* const start = out + BODY - sl;
+    memcpy(start, size_line, sl);
+    uint8_t* const f = out + BODY;
+    const uint32_t hdr[3] = {seq, cursor, millis()};
+    const uint16_t n16 = m;
+    memcpy(f, hdr, 12);
+    memcpy(f + 12, &n16, 2);
+    int16_t* pcm = reinterpret_cast<int16_t*>(f + 14);
+    for (uint32_t i = 0; i < m; i++) pcm[i] = ring_at(cursor + i);
+    if (!ring_intact(cursor)) {  // overwritten while copying: drop the frame, the position gap says so
+      cursor = write_pos.load() - ring_len / 2;
+      n_overrun++;
+      continue;
+    }
+    memcpy(f + len, "\r\n", 2);
+    const size_t total = f + len + 2 - start;
+    ok = c.write(start, total) == total;
+    cursor += m;
+    seq++;
+  }
+  debug_streaming = false;
+  if (ok) {
+    c.print("0\r\n\r\n");
+    String status, body;
+    read_response(c, status, body, 3000);
+    Serial.printf("debug stream: ended: %s %s\n", status.c_str(), body.c_str());
+  } else {
+    Serial.println("debug stream: write failed, reconnecting");
+  }
+  c.stop();
+}
+
+void stream_debug() {
+  const uint32_t gen = debug_gen.load();
+  uint32_t cursor = debug_start.load(), seq = 0;
+  while (debug_running(gen)) {
+    if (WiFi.status() == WL_CONNECTED) stream_session(gen, cursor, seq);
+    if (debug_running(gen)) pump(1000);  // connect failed or the link dropped
+  }
+  debug_streaming = false;
+  Serial.println("debug stream: stopped");
+}
+
 void net_task(void*) {
   Job* j;
   uint32_t patterns_at = 0;
   for (;;) {
     ha::poll();
+    if (ha::debug_active.load()) {
+      stream_debug();
+      continue;
+    }
     if (HAVE_SERVER && WiFi.status() == WL_CONNECTED &&
         (patterns_refresh.exchange(false) || !patterns_at || millis() - patterns_at > PATTERNS_REFRESH_MS)) {
       patterns_at = millis() | 1;
@@ -645,6 +763,30 @@ void identify() {
   Serial.printf("identify: beeped%s\n", audio_ok ? "" : ", mic did not restart");
 }
 
+// Debug mode on/off, from HA's switch or the timeout. Runs in loop(), which owns the detector.
+void debug_update() {
+  const int req = ha::debug_request.exchange(0);
+  const bool on = ha::debug_active.load();
+  if (req > 0 && !HAVE_SERVER) Serial.println("debug mode: no debug_server configured, ignored");
+  else if (req > 0) {
+    debug_deadline = millis() + DEBUG_TIMEOUT_MS;
+    if (!on) {
+      debug_start = write_pos.load();
+      debug_gen++;
+      ha::debug_active = true;
+      Serial.printf("debug mode ON for %u s\n", unsigned(DEBUG_TIMEOUT_MS / 1000));
+    }
+  } else if (on && (req < 0 || int32_t(millis() - debug_deadline.load()) >= 0)) {
+    ha::debug_active = false;
+    det.~Detector();  // placement-new: no large temporary on this stack
+    new (&det) wd::Detector();
+    memset(frame, 0, sizeof frame);
+    det_start = write_pos.load();
+    Serial.printf("debug mode OFF (%s)\n", req < 0 ? "switched off" : "timeout");
+  }
+
+}
+
 // ---- button: play back the registered patterns ----
 constexpr int PATTERN_NOTE_MIN_MS = 40, PATTERN_NOTE_MAX_MS = 1500, PATTERN_GAP_MS = 700;
 uint32_t no_patterns_until_ms = 0;
@@ -726,6 +868,10 @@ void led_update(float level_dbfs) {
   const uint32_t now = millis();
   const int res = led_result.load();
   if (button_down() || now < identify_until_ms) neopixelWrite(PIN_LED, 40, 40, 40);
+  else if (ha::debug_active.load()) {  // cyan while streaming, blinking while there is no connection
+    const bool lit = debug_streaming || now / 500 % 2;
+    neopixelWrite(PIN_LED, 0, lit ? 48 : 0, lit ? 48 : 0);
+  }
   else if (now < no_patterns_until_ms) neopixelWrite(PIN_LED, 40, 30, 0);
   else if (res && now - led_result_ms.load() < 1500) neopixelWrite(PIN_LED, res < 0 ? 64 : 0, res > 0 ? 64 : 0, 0);
   else if (uploading) neopixelWrite(PIN_LED, 40, 30, 0);
@@ -757,8 +903,10 @@ void setup() {
 
 void loop() {
   net_poll();
-  if (ha::identify_requested.exchange(false)) identify();
-  if (audio_ok && button_pressed()) play_patterns();
+  debug_update();
+  const bool debug = ha::debug_active.load();
+  if (ha::identify_requested.exchange(false) && !debug) identify();
+  if (audio_ok && !debug && button_pressed()) play_patterns();
   if (!audio_ok) {  // keep OTA alive and show the fault
     neopixelWrite(PIN_LED, millis() / 500 % 2 ? 64 : 0, 0, 0);
     delay(10);
@@ -807,7 +955,7 @@ void loop() {
   const float level_dbfs = 10 * log10f(ms_frame + 1e-12f);
 
   // The first frame needs NFFT samples, so frame i covers samples [i*HOP, i*HOP + NFFT) after det_start.
-  if (pos + HOP - det_start >= uint32_t(NFFT)) {
+  if (!ha::debug_active.load() && pos + HOP - det_start >= uint32_t(NFFT)) {
     const uint32_t t0 = micros();
     const wd::Event* e = det.push(frame);
     const uint32_t dt = micros() - t0;

@@ -22,6 +22,7 @@ import threading
 import time
 
 SCHEMA = 1
+DEBUG_TIMEOUT_S = 600  # firmware's DEBUG_TIMEOUT_MS
 BOOT_NONCE = f"{random.getrandbits(16):04x}"  # as the firmware: ids stay unique across restarts
 BASE_TYPES = ["rejected", "trigger"]
 MAX_PAYLOAD = 1536  # firmware's PubSubClient buffer, header included
@@ -33,7 +34,7 @@ def node_ids(n: int) -> list[str]:
 
 def topics(node: str) -> dict[str, str]:
     base = f"whistle/{node}"
-    return {k: f"{base}/{k}" for k in ("status", "info", "cmd", "detection", "telemetry", "feedback")}
+    return {k: f"{base}/{k}" for k in ("status", "info", "cmd", "detection", "telemetry", "feedback", "debug")}
 
 
 def device(node: str) -> dict:
@@ -83,6 +84,15 @@ def discovery(node: str, event_types: list[str]) -> dict[str, dict]:
             "payload_press": json.dumps({"cmd": "identify"}, separators=(",", ":")),
             "device_class": "identify",
             "entity_category": "config",
+        },
+        f"homeassistant/switch/{uid}/debug_stream/config": {
+            **_common(node, "switch", "debug_stream", "Debug audio stream"),
+            "command_topic": t["cmd"],
+            "payload_on": json.dumps({"cmd": "debug_on"}, separators=(",", ":")),
+            "payload_off": json.dumps({"cmd": "debug_off"}, separators=(",", ":")),
+            "state_topic": t["debug"],
+            "entity_category": "config",
+            "icon": "mdi:microphone-message",
         },
     }
     for key, name, unit, dev_class in SENSORS:
@@ -141,6 +151,7 @@ class FakeNode:
         self.idx, self.node, self.t = idx, node, topics(node)
         self.types = list(BASE_TYPES)
         self.seq = 0
+        self._debug_timer = None
         self.c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"whistle_{node}")
         if args.user:
             self.c.username_pw_set(args.user, args.password)
@@ -166,12 +177,21 @@ class FakeNode:
         c.subscribe(self.t["feedback"], qos=1)
         c.subscribe("homeassistant/status", qos=1)
         self.publish_discovery()
+        self._pub(self.t["debug"], "OFF", retain=True)
         print(f"[{self.node}] connected")
 
     def _on_message(self, c, userdata, msg):
         body = msg.payload.decode(errors="replace")
         if msg.topic == "homeassistant/status" and body == "online":
             self.publish_discovery()
+        elif msg.topic == self.t["cmd"] and "debug_" in body:
+            on = "debug_on" in body
+            self._debug_timer and self._debug_timer.cancel()
+            self._pub(self.t["debug"], "ON" if on else "OFF", retain=True)
+            if on:  # as the firmware, the mode reverts by itself
+                self._debug_timer = threading.Timer(DEBUG_TIMEOUT_S, self._pub, (self.t["debug"], "OFF", True))
+                self._debug_timer.start()
+            print(f"[{self.node}] debug stream {'ON' if on else 'OFF'}")
         elif msg.topic == self.t["cmd"]:
             print(f"[{self.node}] cmd {body} -> {'BEEP BEEP BEEP' if 'identify' in body else 'ignored'}")
         elif msg.topic == self.t["feedback"]:
@@ -190,7 +210,7 @@ class FakeNode:
         """Clear every retained topic, so HA deletes the device."""
         for topic in discovery(self.node, self.types):
             self.c.publish(topic, b"", qos=1, retain=True)
-        for k in ("status", "info"):
+        for k in ("status", "info", "debug"):
             self.c.publish(self.t[k], b"", qos=1, retain=True)
 
     def stop(self):
