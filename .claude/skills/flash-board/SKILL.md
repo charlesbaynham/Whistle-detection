@@ -5,76 +5,42 @@ description: Invoke whenever an ESP32 board (M5Stack ATOM Echo) is flashed with 
 
 # Flashing the ATOM Echo
 
-## Where it can run
+## Cloud session: one command
 
-- **Cloud session, OTA via the flasher container (canonical):** see "Flasher container" below.
-- **Cloud session, OTA straight over Tailscale/Pi:** see "Cloud OTA" below; needs Pi SNAT off, which breaks other tailnet-to-LAN access, so prefer the flasher.
+```sh
+scripts/flash.sh                 # build HEAD on the flasher, OTA it, verify the reboot; ~1-4 min
+scripts/flash.sh --ref <ref>     # or --worktree for uncommitted changes (rev shows as <sha>+)
+```
+
+It ships `firmware/` to the flasher container (CT 138, `10.0.2.14`, declared in homelab-infra `tofu/flasher`), writes
+`secrets.ini` there for the build only, runs `pio run -e atom-echo-ota -t upload`, then polls the debug server's
+`device-heartbeats.jsonl` (via the Proxmox host) for a heartbeat with `fw == <rev>` and a fresh `uptime_s`. Output is a few
+lines ending in `FLASH OK ...` or `FLASH FAIL (<code>): ...`. Exit codes: 0 ok, 2 usage, 10 secrets missing, 11 flasher or
+tailnet unreachable, 12 build/upload failed (log tail printed), 13 uploaded but reboot not verified.
+
+Only the Secret Server fetches need an agent (an MCP call cannot be made from a script). First time in a session (exit 10):
+
+1. `scripts/flash.sh prep` mints a session GPG key and prints its public half.
+2. In one parallel batch call `get_lab_ssh_key`, `get_whistle_secrets_ini` and `get_ts_authkey` with that public key.
+   `ts` is only needed if the tailnet is not already up.
+3. Pipe each result's `ciphertext` value into `scripts/flash.sh save ssh|ini|ts` (stdin; the JSON string or armored block).
+4. Run `scripts/flash.sh`.
+
+State lives in `/tmp/flash-secrets` (override `FLASH_DIR`); later flashes in the same session need only step 4. The script joins
+the tailnet itself (`ts_connect.sh`; `tailscaled` dies when the container sleeps, which it handles). Override with
+`FLASHER_HOST`, `BOARD_IP`, `LOG_HOST`/`LOG_CT` (where the heartbeats are read).
+
+- The flasher keeps its build cache in `/root/flash/.pio`, and `secrets.ini` is deleted after each run.
+- Board probes are about 50 % lossy (Wi-Fi power-save, do not disable it); the script retries the upload once.
+- Don't use the `workspace` CT (113) as flasher: its firewall drops traffic to `10.0.0.0/16`.
+- Do not turn Pi SNAT off: that broke tailnet access to LAN hosts (rolled back 28 Nov).
+- The firmware's `fw` rev comes from `$GIT_REV` (set by the script, the flasher has no `.git`), else from git.
+- Verified 2026-11-28: build + OTA + heartbeat check `FLASH OK` in 70 s (incremental) from a cloud session.
+
+## Where else it can run
+
 - **Cloud session, USB:** impossible. Ask the user, or start a Remote Control session on a machine with the board on USB.
 - **User's machine / Remote Control:** everything below.
-
-## Flasher container (canonical cloud route)
-
-LXC 137 `flasher` on the Proxmox host (Debian 13, LAN DHCP, 10.0.0.229 at creation, tailnet `100.64.0.19`, has
-`pio` and `uv`). It sits on the LAN and joins the Headscale tailnet itself, so the board talks to it directly:
-no subnet router or Pi SNAT involved (SNAT can stay on). Verified 2026-11-27: build + OTA `Result: OK` in 138 s,
-board rebooted. Created by hand (`pct create 137`, tun device added in `/etc/pve/lxc/137.conf`), not in homelab-infra.
-
-```sh
-# 1. Join the tailnet as in "Cloud OTA" step 1 (ts_connect.sh), then reach the flasher at 100.64.0.19.
-#    Its authorized_keys holds a per-session key from 27 Nov; if yours is not in it, add one via
-#    ssh -J root@10.0.1.11 root@10.0.1.3 'pct exec 137 -- ...' (needs the lab SSH key, ask Charles).
-# 2. Ship the firmware and secrets.ini (decrypt straight into ssh, as in "Cloud OTA" step 3):
-tar --exclude=.git --exclude=.pio --exclude=secrets.ini -czf - firmware | ssh root@100.64.0.19 'rm -rf /root/wd && mkdir /root/wd && tar -xzf - -C /root/wd'
-"$S/decrypt.sh" whistle.asc "$FPR" | base64 -d | ssh root@100.64.0.19 'umask 077; cat > /root/wd/firmware/secrets.ini'
-# 3. Build + upload on the flasher, in the background (about 2-4 min), then delete secrets.ini:
-ssh root@100.64.0.19 'cd /root/wd/firmware && PATH=/root/.local/bin:$PATH nohup sh -c "pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52; echo EXIT=\$?; rm -f secrets.ini" >/root/ota.log 2>&1 </dev/null &'
-ssh root@100.64.0.19 tail /root/ota.log            # expect Result/SUCCESS and EXIT=0
-ssh root@100.64.0.19 'python3 /tmp/ota_probe.py 10.0.1.52'   # optional; copy .claude/skills/flash-board/ota_probe.py there first
-```
-
-- Probes are about 50 % lossy (Wi-Fi power-save): retry before concluding the board is down.
-- The tailnet node uses the reusable ephemeral key; if `flasher` drops off the tailnet, `pct exec 137 -- tailscale up
-  --login-server=https://headscale.houseabsolute.co.uk --authkey=<key> --hostname=flasher --accept-dns=false --ssh=false`.
-- Don't keep secrets.ini on the flasher (the command above removes it).
-
-## Cloud OTA (Tailscale, via the Pi)
-
-The board has a fixed IP, `10.0.1.52` (DHCP reservation on the Pi; DNS `whistle-echo.ha`, not resolvable from the cloud, use the IP).
-Cloud sessions reach `10.0.0.0/16` via the house Headscale; `openwrt-pi` (`100.64.0.1`, `10.0.1.11`) is the subnet router.
-
-```sh
-# 1. Mint an ephemeral GPG key (house-absolute:fetching-secrets), then call get_ts_authkey and
-#    get_whistle_secrets_ini together. Decrypt each straight into its consumer; never echo either:
-TS_AUTHKEY="$($S/decrypt.sh ts.asc $FPR)" .claude/skills/flash-board/ts_connect.sh
-# 2. Check the board answers (expect "reply: AUTH <nonce>"):
-python3 .claude/skills/flash-board/ota_probe.py 10.0.1.52
-# 3. Write secrets.ini (see "secrets.ini" below), then build and upload:
-(umask 077; "$S/decrypt.sh" whistle.asc "$FPR" | base64 -d > firmware/secrets.ini)
-uv tool install platformio    # once; ~/.local/bin/pio
-cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
-```
-
-- The key is reusable + ephemeral, expires 2027-10-15 (renewal procedure is in the `tailscale-connect` skill of `ha-workspace`).
-- `tailscaled` dies when the container sleeps; re-run `ts_connect.sh` (idempotent) if probes start timing out.
-- Verified 2026-11-26: kernel-mode join works in a cloud session (`/dev/net/tun` present), `tailscale ping 10.0.1.52`
-  routes via openwrt-pi (DERP), and the board answers the OTA invitation with `AUTH`. Build of `atom-echo-ota` works.
-- **Verified 2026-11-27: cloud OTA works once the Pi has SNAT off.** `Result: OK` in 220 s (the upload is slow over
-  the board's Wi-Fi, ~4 min; run it in the background and watch the log). The fix is runtime state on `openwrt-pi`:
-  `ssh root@10.0.1.11 tailscale set --snat-subnet-routes=false` (persists in the tailscale state; check with
-  `tailscale debug prefs | grep NoSNAT`, expect `true`). The `nosnat` option in `/etc/config/tailscale`
-  (houseabsolute-openwrt !9) is NOT read by anything on the Pi, so it does not do this. Without it espota stalls after
-  `Authenticating...OK`: the Pi SNATs tailnet to LAN traffic, so the board dials the Pi (`10.0.1.11`) for the connect-back.
-- Side effect of SNAT off: LAN hosts whose gateway is `10.0.1.1` cannot reply to tailnet addresses, e.g. a cloud session's
-  direct `ssh root@10.0.1.3` hangs. Jump through the Pi instead: `ssh -J root@10.0.1.11 root@10.0.1.3`.
-- Board probes are flaky (about 50% loss on ping/probe, Wi-Fi power-save); retry `ota_probe.py` before concluding it is down.
-- Don't use the `workspace` CT (113) as the flash host: its Proxmox firewall drops all outbound to `10.0.0.0/16` except SSH
-  ("pivot control") and inbound by default, so neither the invitation nor the connect-back passes.
-- Check afterwards: the board reboots; `device-heartbeats.jsonl` on CT 131 (NixOS CT: use `/run/current-system/sw/bin`
-  in PATH) shows `uptime_s` restarting from 0, and HA's `sensor.whistle_echo_uptime` / `sensor.whistle_echo_*` update.
-- Setup that does work: `TS_AUTHKEY=... ts_connect.sh`, `ota_probe.py` (gets `AUTH`), `uv tool install platformio`,
-  secrets.ini fetched as above. No SSH or ha-workspace needed for any of those.
-- No `/dev/net/tun`: `ts_connect.sh` falls back to userspace networking, where only processes using
-  `tailscale nc`/the SOCKS proxy are routed; plain espota would not be. Untested.
 
 ## Prerequisites
 
@@ -92,8 +58,8 @@ cd firmware && pio run -e atom-echo-ota -t upload --upload-port 10.0.1.52
 ## secrets.ini
 
 The shared copy is the Secret Server entry `whistle_secrets_ini` (base64 of the whole file): fetch it
-with `get_whistle_secrets_ini` and `house-absolute:fetching-secrets`, and decrypt only into
-`firmware/secrets.ini` as in "Cloud OTA" step 3. Its `debug_server` is the deployed server,
+with `get_whistle_secrets_ini` and `house-absolute:fetching-secrets` (`scripts/flash.sh` does this for cloud flashes);
+decrypt it straight into `firmware/secrets.ini`. Its `debug_server` is the deployed server,
 `http://whistle.i.houseabsolute.co.uk` (plain HTTP on purpose: over TLS the board's clip uploads fail for
 lack of memory; the ingress serves `/api/device/` on port 80, homelab-infra#235). To use a laptop debug
 server instead, override that line locally.
