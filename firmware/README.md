@@ -41,6 +41,9 @@ and fail for lack of memory (seen 2026-11-27).
 - `/api/device/heartbeat` every 10 s: frame, note, event and trigger counts, tonal fraction, level,
   band noise floor, DSP µs, longest gap between mic reads, heap, RSSI. Appended to `$WHISTLE_DATA_DIR/device-heartbeats.jsonl`.
 
+- Debug mode (the HA switch `Debug audio stream`): detection off, all audio streamed to `/api/device/stream`
+  for 10 min or until switched off. LED cyan. Not tested over `https://`. Format and server side: `../docs/debug-stream.md`.
+
 Serial prints one line per note, event, trigger, server reply and heartbeat. How to run the server:
 `.claude/skills/device-debug-server/SKILL.md`.
 

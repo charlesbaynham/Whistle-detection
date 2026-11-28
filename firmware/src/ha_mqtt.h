@@ -34,4 +34,9 @@ constexpr uint32_t FEEDBACK_MS = 2500;
 extern std::atomic<bool> identify_requested;
 extern std::atomic<int> feedback;
 
+// Debug stream switch (docs/debug-stream.md). debug_request: +1 on, -1 off, set by the network task and consumed
+// by loop(), which owns the mode. debug_active is loop()'s answer; poll() publishes changes to the switch's state.
+extern std::atomic<int> debug_request;
+extern std::atomic<bool> debug_active;
+
 }  // namespace ha

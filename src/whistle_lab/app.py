@@ -18,13 +18,14 @@ from pathlib import Path
 
 import hmac
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 from scipy.io import wavfile
 
 from . import detect as det
+from .stream import MAX_STREAM_S, SAMPLE_RATE, StreamRecorder
 
 STATIC = Path(__file__).parent / "static"
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -236,6 +237,29 @@ def device_heartbeat(body: dict):
         f.write(json.dumps(body) + "\n")
     print("[heartbeat] " + " ".join(f"{k}={v}" for k, v in body.items() if k != "received"), flush=True)
     return {"ok": True}
+
+
+DEBUG_STREAM_DATASET = "device-debug"
+
+
+@app.post("/api/device/stream", dependencies=[Depends(require_device_token)])
+async def device_stream(request: Request, x_whistle_host: str = Header("device"), x_whistle_fw: str = Header("")):
+    """Debug mode: the device streams all its mic audio as a chunked body (stream.py has the framing). It is
+    saved as one-minute WAV segments in DEBUG_STREAM_DATASET, with silence and a `gaps` entry where the device
+    dropped audio. Segments are finished as they fill, so a dropped connection loses at most the last frames."""
+    d = data_dir() / DEBUG_STREAM_DATASET
+    d.mkdir(parents=True, exist_ok=True)
+    rec = StreamRecorder(d, _check_name(re.sub(r"[^A-Za-z0-9_.-]", "_", x_whistle_host)[:64], "host"), x_whistle_fw[:32])
+    print(f"[stream] {rec.host} fw={rec.fw} start session={rec.session}", flush=True)
+    try:
+        async for chunk in request.stream():
+            rec.feed(chunk)
+            if rec.total > MAX_STREAM_S * SAMPLE_RATE:
+                break
+    finally:
+        summary = rec.close()
+        print(f"[stream] {rec.host} end {summary}", flush=True)
+    return summary
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

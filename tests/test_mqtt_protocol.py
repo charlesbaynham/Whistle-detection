@@ -24,7 +24,7 @@ def test_discovery_configs_fit_and_are_unique():
             assert topic.startswith("homeassistant/") and topic.endswith("/config")
             domain = topic.split("/")[1]
             assert cfg["default_entity_id"] == f"{domain}.{cfg['unique_id']}"
-    assert len(seen) == 3 * 7
+    assert len(seen) == 3 * 8
 
 
 def test_detection_type_is_declared():

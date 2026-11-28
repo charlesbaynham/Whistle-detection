@@ -13,6 +13,8 @@ namespace ha {
 
 std::atomic<bool> identify_requested{false};
 std::atomic<int> feedback{NONE};
+std::atomic<int> debug_request{0};
+std::atomic<bool> debug_active{false};
 
 namespace {
 constexpr int SCHEMA = 1;
@@ -25,7 +27,8 @@ PubSubClient mqtt(tcp);
 char node[7];            // last 3 MAC bytes, hex
 char base[24];           // whistle/<node>
 char uid[16];            // whistle_<node>
-char t_status[40], t_cmd[40], t_detection[48], t_telemetry[48], t_info[40], t_feedback[48];
+char t_status[40], t_cmd[40], t_detection[48], t_telemetry[48], t_info[40], t_feedback[48], t_debug[40];
+int debug_published = -1;  // -1: the switch's state topic needs (re)publishing
 
 // Event types HA has been told about. HA drops events whose type isn't in the discovery config, so a new
 // server label is added (and persisted) before its first event is published.
@@ -124,6 +127,11 @@ void publish_discovery() {
           "\",\"payload_press\":\"{\\\"cmd\\\":\\\"identify\\\"}\",\"device_class\":\"identify\","
           "\"entity_category\":\"config\"}",
       true);
+  pub((String("homeassistant/switch/") + uid + "/debug_stream/config").c_str(),
+      "{" + common("switch", "debug_stream", "Debug audio stream") + ",\"command_topic\":\"" + t_cmd +
+          "\",\"payload_on\":\"{\\\"cmd\\\":\\\"debug_on\\\"}\",\"payload_off\":\"{\\\"cmd\\\":\\\"debug_off\\\"}\","
+          "\"state_topic\":\"" + t_debug + "\",\"entity_category\":\"config\",\"icon\":\"mdi:microphone-message\"}",
+      true);
   publish_sensor_config("rssi", "Wi-Fi signal", "dBm", "signal_strength");
   publish_sensor_config("heap", "Free heap", "B", "data_size");
   publish_sensor_config("uptime_s", "Uptime", "s", "duration");
@@ -152,6 +160,8 @@ void on_message(char* topic, uint8_t* payload, unsigned len) {
   }
   if (!strcmp(topic, t_cmd)) {
     if (msg.indexOf("\"identify\"") >= 0 || msg == "identify") identify_requested = true;
+    else if (msg.indexOf("\"debug_on\"") >= 0) debug_request = 1;
+    else if (msg.indexOf("\"debug_off\"") >= 0) debug_request = -1;
     else if (msg.indexOf("\"reboot\"") >= 0 || msg == "reboot") {
       mqtt.publish(t_status, "offline", true);
       mqtt.disconnect();
@@ -177,6 +187,7 @@ void try_connect() {
   mqtt.subscribe(t_cmd, 1);
   mqtt.subscribe(t_feedback, 1);
   mqtt.subscribe("homeassistant/status", 1);
+  debug_published = -1;
   publish_discovery();
 }
 }  // namespace
@@ -194,6 +205,7 @@ void setup() {
   snprintf(t_detection, sizeof t_detection, "%s/detection", base);
   snprintf(t_telemetry, sizeof t_telemetry, "%s/telemetry", base);
   snprintf(t_feedback, sizeof t_feedback, "%s/feedback", base);
+  snprintf(t_debug, sizeof t_debug, "%s/debug", base);
   boot_nonce = esp_random() & 0xffff;
   load_types();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
@@ -209,6 +221,8 @@ void poll() {
   if (!ENABLED || WiFi.status() != WL_CONNECTED) return;
   if (!mqtt.connected()) try_connect();
   mqtt.loop();
+  const int dbg = debug_active.load();
+  if (dbg != debug_published && mqtt.connected() && mqtt.publish(t_debug, dbg ? "ON" : "OFF", true)) debug_published = dbg;
   if (*pending_id && millis() - pending_since > FEEDBACK_MS) {
     Serial.printf("mqtt: no feedback for %s\n", pending_id);
     *pending_id = 0;
