@@ -15,6 +15,7 @@ FLASH_DIR=${FLASH_DIR:-/tmp/flash-secrets}
 UPLOAD_TIMEOUT=${UPLOAD_TIMEOUT:-900}
 VERIFY_TIMEOUT=${VERIFY_TIMEOUT:-120}
 
+RDIR=/root/flash   # own directory on the flasher; the build tree and log live here
 KEY=$FLASH_DIR/ssh_key
 export GNUPGHOME=$FLASH_DIR/gnupg
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -96,30 +97,31 @@ if [ $WORKTREE = 1 ]; then REV=$(git rev-parse --short=7 HEAD)+; else REV=$(git 
 PREV=$(heartbeat); [ -n "$PREV" ] && log "board now: fw=$(hb_field fw <<<"$PREV") uptime=$(hb_field uptime_s <<<"$PREV")s"
 log "shipping firmware @ $REV to $FLASHER_HOST"
 if [ $WORKTREE = 1 ]; then SRC=(tar --exclude=.pio --exclude=secrets.ini -cf - firmware); else SRC=(git archive "$REF" firmware); fi
-fssh 'mkdir -p /root/wd/firmware && cd /root/wd/firmware && find . -mindepth 1 -maxdepth 1 ! -name .pio -exec rm -rf {} + && cd .. && tar -x' < <("${SRC[@]}") \
+fssh "mkdir -p $RDIR/firmware && cd $RDIR/firmware && find . -mindepth 1 -maxdepth 1 ! -name .pio -exec rm -rf {} + && cd .. && tar -x" < <("${SRC[@]}") \
   || die 11 "could not ship the firmware"
 dec ini | { read -r first; if [[ $first == \[* ]]; then { echo "$first"; cat; }; else { echo "$first"; cat; } | base64 -d; fi; } \
-  | fssh 'umask 077; cat > /root/wd/firmware/secrets.ini' || die 11 "could not write secrets.ini on the flasher"
-fssh 'grep -q "^\[secrets\]" /root/wd/firmware/secrets.ini' || die 10 "secrets.ini on the flasher is not a valid file"
+  | fssh "umask 077; cat > $RDIR/firmware/secrets.ini" || die 11 "could not write secrets.ini on the flasher"
+fssh "grep -q '^\[secrets\]' $RDIR/firmware/secrets.ini" || die 10 "secrets.ini on the flasher is not a valid file"
 
 T0=$(date +%s)
 log "build + upload (about 2-4 min)"
-fssh "cat > /root/wd/run.sh && rm -f /root/ota.log && setsid nohup bash /root/wd/run.sh </dev/null >/dev/null 2>&1 &" <<RUN
-cd /root/wd/firmware; export PATH=/root/.local/bin:\$PATH GIT_REV=$REV
+fssh "rm -f $RDIR/ota.log; cat > $RDIR/run.sh" <<RUN
+cd $RDIR/firmware; export PATH=/root/.local/bin:\$PATH GIT_REV=$REV
 for try in 1 2; do
-  pio run -e atom-echo-ota -t upload --upload-port $BOARD_IP >> /root/ota.log 2>&1; rc=\$?
-  [ \$rc = 0 ] && break; echo "--- attempt \$try failed (\$rc)" >> /root/ota.log; sleep 5
+  pio run -e atom-echo-ota -t upload --upload-port $BOARD_IP >> $RDIR/ota.log 2>&1; rc=\$?
+  [ \$rc = 0 ] && break; echo "--- attempt \$try failed (\$rc)" >> $RDIR/ota.log; sleep 5
 done
-rm -f secrets.ini; echo EXIT=\$rc >> /root/ota.log
+rm -f secrets.ini; echo EXIT=\$rc >> $RDIR/ota.log
 RUN
+fssh "setsid nohup bash $RDIR/run.sh </dev/null >/dev/null 2>&1 &" || die 11 "could not start the build on the flasher"
 RC=""
 while [ -z "$RC" ] && [ $(( $(date +%s) - T0 )) -lt "$UPLOAD_TIMEOUT" ]; do
-  sleep 10; RC=$(fssh "sed -n 's/^EXIT=//p' /root/ota.log" 2>/dev/null)
+  sleep 10; RC=$(fssh "sed -n 's/^EXIT=//p' $RDIR/ota.log" 2>/dev/null)
 done
-[ -n "$RC" ] || die 12 "no result after ${UPLOAD_TIMEOUT}s (see /root/ota.log on $FLASHER_HOST)"
+[ -n "$RC" ] || die 12 "no result after ${UPLOAD_TIMEOUT}s (see $RDIR/ota.log on $FLASHER_HOST)"
 if [ "$RC" != 0 ]; then
-  fssh "tail -n 12 /root/ota.log | cut -c1-200" >&2
-  die 12 "build/upload exit $RC (log above; also /root/ota.log on $FLASHER_HOST)"
+  fssh "tail -n 12 $RDIR/ota.log | cut -c1-200" >&2
+  die 12 "build/upload exit $RC (log above; also $RDIR/ota.log on $FLASHER_HOST)"
 fi
 T1=$(date +%s); log "upload OK in $((T1 - T0))s"
 

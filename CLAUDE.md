@@ -23,8 +23,9 @@ False-positive rejection is the priority.
 - Documentation-only changes (`docs/`, README, CLAUDE.md, skill docs) may be committed and pushed straight to
   `main` without a PR or approval. Code and firmware changes still go via PR for Charles to merge.
 - Prefer zero extra wiring and minimal hardware fiddling.
-- Firmware builds in a cloud session (`pio run` in `firmware/`), but flashing needs a board on
-  the user's USB or LAN. Never claim a firmware change works on hardware until it has been flashed
+- Firmware builds in a cloud session (`pio run` in `firmware/`). **To flash the board from a cloud session just run
+  `scripts/flash.sh`** (OTA via the flasher container, verifies the reboot; first run in a session needs the 3 secret
+  fetches it tells you about; see `flash-board`). Don't hand-roll flashing steps. Never claim a firmware change works on hardware until it has been flashed
   and its serial output or behaviour checked.
 - Secrets (Wi-Fi, OTA password) live in `firmware/secrets.ini`, which is gitignored. Never commit it.
   Fetch it with the Secret Server's `get_whistle_secrets_ini` (see `flash-board`).
@@ -35,8 +36,8 @@ Turn anything done more than once into a skill in `.claude/skills/<name>/SKILL.m
 existing skills correct when the procedure changes. When you finish a task that used a skill and
 found it wrong or incomplete, fix the skill in the same PR. Current skills:
 
-- `flash-board`: invoke whenever a board is flashed (USB or OTA). Also the canonical route for OTA from a cloud
-  session (joins the house tailnet; board is at fixed IP 10.0.1.52).
+- `flash-board`: invoke whenever a board is flashed (USB or OTA). Cloud OTA is `scripts/flash.sh` (board at fixed IP
+  10.0.1.52, flasher CT 138); the skill covers USB and failures.
 - `device-debug-server`: run whistle-lab on the laptop to receive device triggers and heartbeats.
 - `port-detector-stage`: move detector code from Python to `firmware/lib/whistle_dsp` with a comparison test.
 - `mqtt-check`: test the MQTT/HA link with a local broker or simulated nodes, without a board.
