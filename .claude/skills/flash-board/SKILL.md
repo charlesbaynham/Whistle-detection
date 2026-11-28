@@ -20,7 +20,7 @@ subnet route, which works with Pi SNAT on (leave SNAT on; never `tailscale set -
 tailnet access to most LAN hosts). Cattle: it is rebuilt when its declaration changes, so PlatformIO re-downloads
 (about 1.5 GB) on the first build afterwards. Authorised keys are Charles's set plus the agent key.
 
-Until #237 is deployed, the old hand-made CT 137 (DHCP, tailnet `100.64.0.19`) is the flasher; do not recreate it by hand.
+Verified 2026-11-28: build + OTA `SUCCESS` in 115 s from CT 138. The old hand-made CT 137 is gone; never recreate guests by hand.
 
 ```sh
 # 1. Join the tailnet (tailscale-connect skill in ha-workspace, or .claude/skills/flash-board/ts_connect.sh with
