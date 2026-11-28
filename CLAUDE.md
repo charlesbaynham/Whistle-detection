@@ -20,6 +20,8 @@ False-positive rejection is the priority.
 ## Working here
 
 - The user is an expert Python / embedded C++ developer. Be concise; don't over-explain.
+- Documentation-only changes (`docs/`, README, CLAUDE.md, skill docs) may be committed and pushed straight to
+  `main` without a PR or approval. Code and firmware changes still go via PR for Charles to merge.
 - Prefer zero extra wiring and minimal hardware fiddling.
 - Firmware builds in a cloud session (`pio run` in `firmware/`), but flashing needs a board on
   the user's USB or LAN. Never claim a firmware change works on hardware until it has been flashed
