@@ -19,7 +19,7 @@ from pathlib import Path
 import hmac
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 from scipy.io import wavfile
@@ -228,6 +228,23 @@ async def device_trigger(audio: UploadFile = File(...), meta: str = Form("{}"), 
           f"best={saved['server']['best_label']} rho={reply['rho'] and round(reply['rho'])} veto={reply['veto']} "
           f"id={saved['id']}", flush=True)
     return reply
+
+
+MAX_PLAYBACK_PATTERNS, MAX_PLAYBACK_NOTES = 12, 10
+
+
+@app.get("/api/device/patterns", dependencies=[Depends(require_device_token)], response_class=PlainTextResponse)
+def device_patterns(dataset: str = "default"):
+    """The registered patterns as the device plays them back on a button press: one line per pattern,
+    `label hz:dur_ms:onset_ms hz:dur_ms:onset_ms ...`, onsets relative to the first note. Plain text so the
+    firmware needs no JSON parser."""
+    lines = []
+    for label, t in sorted(_templates(dataset).items())[:MAX_PLAYBACK_PATTERNS]:
+        hz = t["f0_hz"] * 2.0 ** (np.concatenate([[0.0], np.cumsum(t["steps"])]) / 12)
+        notes = zip(hz, t["durations"], t["onsets"])
+        lines.append(" ".join([label.replace(" ", "_")] + [
+            f"{round(f)}:{round(d * 1000)}:{round(o * 1000)}" for f, d, o in list(notes)[:MAX_PLAYBACK_NOTES]]))
+    return "\n".join(lines) + "\n"
 
 
 @app.post("/api/device/heartbeat", dependencies=[Depends(require_device_token)])
