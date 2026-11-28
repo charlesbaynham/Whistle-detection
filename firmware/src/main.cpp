@@ -7,10 +7,12 @@
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #include <driver/i2s.h>
 #include <math.h>
 
 #include <atomic>
+#include <vector>
 
 #include "detector.h"
 #include "ha_mqtt.h"
@@ -116,8 +118,14 @@ constexpr float BEEP_AMPLITUDE = 6000;
 constexpr int BEEP_MS = 90, GAP_MS = 50;
 constexpr int SPK_DMA_BUFS = 4, SPK_DMA_LEN = 256;  // frames
 
-// Plays the tones (Hz) and returns once they are out of the speaker. The mic must be uninstalled.
-void play_tones(const int* freqs, int n) {
+struct Tone {
+  int hz;  // 0 = silence
+  int ms;
+};
+
+// Plays the tones and returns once they are out of the speaker, or early when `stop` (if given) says so.
+// The mic must be uninstalled.
+void play_tones(const Tone* tones, int n, bool (*stop)() = nullptr) {
   const i2s_config_t cfg = {
       .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
       .sample_rate = SAMPLE_RATE,
@@ -154,13 +162,17 @@ void play_tones(const int* freqs, int n) {
         fill = 0;
       }
     };
-    constexpr int N = SAMPLE_RATE * BEEP_MS / 1000, RAMP = SAMPLE_RATE * 5 / 1000;
-    for (int t = 0; t < n; t++) {
-      for (int i = 0; i < N; i++) {
-        const float env = std::min(1.f, std::min(i, N - 1 - i) / float(RAMP));  // no clicks
-        put(int16_t(BEEP_AMPLITUDE * env * sinf(2 * float(M_PI) * freqs[t] * i / SAMPLE_RATE)));
+    constexpr int RAMP = SAMPLE_RATE * 5 / 1000;
+    for (int t = 0; t < n && !(stop && stop()); t++) {
+      const int len = SAMPLE_RATE * tones[t].ms / 1000;
+      for (int i = 0; i < len; i++) {
+        if (!tones[t].hz) put(0);
+        else {
+          const float env = std::min(1.f, std::min(i, len - 1 - i) / float(RAMP));  // no clicks
+          put(int16_t(BEEP_AMPLITUDE * env * sinf(2 * float(M_PI) * tones[t].hz * i / SAMPLE_RATE)));
+        }
+        if (stop && i % 512 == 0 && stop()) break;
       }
-      for (int i = 0; i < SAMPLE_RATE * GAP_MS / 1000; i++) put(0);
     }
     // i2s_write returns when data is queued: push the tones out of the DMA with a ring's worth of silence.
     for (int i = 0; i < SPK_DMA_BUFS * SPK_DMA_LEN + 128; i++) put(0);
@@ -170,17 +182,24 @@ void play_tones(const int* freqs, int n) {
   i2s_driver_uninstall(MIC_PORT);
 }
 
-// Swaps I2S0 from the mic to the speaker for the tones, then back. Nothing is recorded (and the beeps can't
-// trigger) meanwhile. Returns false if the mic doesn't come back.
-bool beep(const int* freqs, int n) {
-  i2s_driver_uninstall(MIC_PORT);
-  play_tones(freqs, n);
+// Reinstalls the mic after the speaker had I2S0. Returns false if it doesn't come back.
+bool resume_mic() {
   if (!mic_init()) return false;
   // Drop the PDM start-up transient and the room's tail of the last beep.
   int16_t junk[HOP];
   size_t got;
   for (int i = 0; i < 12; i++) i2s_read(MIC_PORT, junk, sizeof junk, &got, portMAX_DELAY);
   return true;
+}
+
+// Swaps I2S0 from the mic to the speaker for the tones, then back. Nothing is recorded (and the beeps can't
+// trigger) meanwhile.
+bool beep(const int* freqs, int n) {
+  Tone tones[16];
+  for (int i = 0; i < n; i++) tones[2 * i] = {freqs[i], BEEP_MS}, tones[2 * i + 1] = {0, GAP_MS};
+  i2s_driver_uninstall(MIC_PORT);
+  play_tones(tones, 2 * n);
+  return resume_mic();
 }
 
 // The verdict on a trigger. With HA, a detection's verdict is HA's `feedback` (docs/mqtt.md).
@@ -258,10 +277,10 @@ bool read_response(WiFiClient& c, String& head, String& body, uint32_t timeout_m
   return body_len < 0 || int(body.length()) >= body_len;
 }
 
-// POSTs a body built by `send` (which must write exactly `len` bytes) and returns the response body, or ""
-// on failure.
+// Sends a request whose body is written by `send` (exactly `len` bytes; none for a GET) and returns the
+// response body, or "" on failure.
 template <typename F>
-String http_post(const char* path, const char* content_type, size_t len, F send) {
+String http_request(const char* method, const char* path, const char* content_type, size_t len, F send) {
   // Shared secret for the server's WHISTLE_DEVICE_TOKEN check; empty = none sent.
   static const String token_header = sizeof(DEVICE_TOKEN) > 1 ? String("X-Whistle-Token: " DEVICE_TOKEN "\r\n") : String();
   WiFiClientSecure tls;
@@ -273,23 +292,68 @@ String http_post(const char* path, const char* content_type, size_t len, F send)
   c.setTimeout(5);  // seconds, for socket sends
   const bool up = server_tls ? tls.connect(server_host, server_port, 8000) : plain.connect(server_host, server_port, 3000);
   if (!up) {
-    Serial.printf("POST %s: connect to %s:%u failed\n", path, server_host, server_port);
+    Serial.printf("%s: connect to %s:%u failed\n", path, server_host, server_port);
     return "";
   }
-  c.printf("POST %s HTTP/1.1\r\nHost: %s\r\n%sContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
-           path, host_hdr, token_header.c_str(), content_type, unsigned(len));
+  c.printf("%s %s HTTP/1.1\r\nHost: %s\r\n%sContent-Type: %s\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
+           method, path, host_hdr, token_header.c_str(), content_type, unsigned(len));
   if (!send(c)) return "";
   String status, body;
   // 10 s: the server runs the full detector before replying.
   if (!read_response(c, status, body, 10000)) {
-    Serial.printf("POST %s: no complete response\n", path);
+    Serial.printf("%s: no complete response\n", path);
     return "";
   }
   if (!status.startsWith("HTTP/1.1 200")) {
-    Serial.printf("POST %s: %s %s\n", path, status.c_str(), body.substring(0, 200).c_str());
+    Serial.printf("%s: %s %s\n", path, status.c_str(), body.substring(0, 200).c_str());
     return "";
   }
   return body;
+}
+
+template <typename F>
+String http_post(const char* path, const char* content_type, size_t len, F send) {
+  return http_request("POST", path, content_type, len, send);
+}
+
+// ---- pattern playback data ----
+// The registered patterns as GET /api/device/patterns returns them (one line per pattern, `label hz:ms:onset_ms
+// ...`), cached in NVS so the button works before the first fetch and with the server down. The network task
+// refreshes it; loop() plays it.
+constexpr uint32_t PATTERNS_REFRESH_MS = 10 * 60 * 1000;
+constexpr size_t PATTERNS_MAX = 3900;  // NVS string limit is 4000
+SemaphoreHandle_t patterns_mu;
+String patterns_text;
+std::atomic<bool> patterns_refresh{false};  // set by the button, so the next press is current
+
+String patterns_get() {
+  xSemaphoreTake(patterns_mu, portMAX_DELAY);
+  String s = patterns_text;
+  xSemaphoreGive(patterns_mu);
+  return s;
+}
+
+void patterns_load() {
+  patterns_mu = xSemaphoreCreateMutex();
+  Preferences p;
+  p.begin("pat", true);
+  patterns_text = p.getString("txt", "");
+  p.end();
+  Serial.printf("patterns: %d bytes cached\n", int(patterns_text.length()));
+}
+
+void patterns_fetch() {
+  const String body = http_request("GET", "/api/device/patterns", "text/plain", 0, [](WiFiClient&) { return true; });
+  if (body.isEmpty() || body.length() > PATTERNS_MAX) return;  // keep the old cache, whatever went wrong
+  if (body == patterns_get()) return;
+  Preferences p;
+  p.begin("pat", false);
+  p.putString("txt", body);
+  p.end();
+  xSemaphoreTake(patterns_mu, portMAX_DELAY);
+  patterns_text = body;
+  xSemaphoreGive(patterns_mu);
+  Serial.printf("patterns: updated, %d bytes\n", int(body.length()));
 }
 
 // Minimal readers for the server's flat JSON reply: "" / NAN when the key is missing or null.
@@ -369,8 +433,14 @@ bool post_heartbeat(Job& j) {
 
 void net_task(void*) {
   Job* j;
+  uint32_t patterns_at = 0;
   for (;;) {
     ha::poll();
+    if (HAVE_SERVER && WiFi.status() == WL_CONNECTED &&
+        (patterns_refresh.exchange(false) || !patterns_at || millis() - patterns_at > PATTERNS_REFRESH_MS)) {
+      patterns_at = millis() | 1;
+      patterns_fetch();
+    }
     // Short wait so the MQTT client is pumped between jobs.
     if (xQueueReceive(jobs, &j, pdMS_TO_TICKS(50)) != pdTRUE) continue;
     if (!j->trigger) ha::publish_telemetry(j->json);
@@ -435,6 +505,7 @@ void net_init() {
   });
 
   if (HAVE_SERVER) parse_server();
+  patterns_load();
   if (HAVE_NET_TASK) {
     jobs = xQueueCreate(4, sizeof(Job*));
     xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, 1, nullptr, 0);  // loop() runs on core 1
@@ -574,10 +645,88 @@ void identify() {
   Serial.printf("identify: beeped%s\n", audio_ok ? "" : ", mic did not restart");
 }
 
+// ---- button: play back the registered patterns ----
+constexpr int PATTERN_NOTE_MIN_MS = 40, PATTERN_NOTE_MAX_MS = 1500, PATTERN_GAP_MS = 700;
+uint32_t no_patterns_until_ms = 0;
+
+bool button_down() { return digitalRead(PIN_BUTTON) == LOW; }
+
+// One true per press, after 25 ms of debounce. Holding does not repeat.
+bool button_pressed() {
+  static bool latched = false;
+  static uint32_t down_since = 0;
+  if (!button_down()) {
+    latched = false;
+    down_since = 0;
+    return false;
+  }
+  if (!down_since) down_since = millis();
+  if (latched || millis() - down_since < 25) return false;
+  return latched = true;
+}
+
+// Ends the playback on a new press: the press that started it must be released first.
+bool stop_armed = false;
+bool stop_requested() {
+  if (!button_down()) stop_armed = true;
+  return stop_armed && button_down();
+}
+
+// Appends one pattern line as tones: a cue, then each note at its onset.
+void add_pattern_tones(const char* line, std::vector<Tone>& out) {
+  out.push_back({700, 80});
+  out.push_back({0, 350});
+  int pos_ms = 0;  // time since the first note's onset
+  const char* p = strchr(line, ' ');
+  while (p && *p) {
+    char* end;
+    const int hz = strtol(p + 1, &end, 10);
+    if (*end != ':') break;
+    const int ms = strtol(end + 1, &end, 10);
+    if (*end != ':') break;
+    const int onset = strtol(end + 1, &end, 10);
+    p = end;
+    if (hz < 300 || hz > 5000 || onset < pos_ms) continue;
+    const int dur = constrain(ms, PATTERN_NOTE_MIN_MS, PATTERN_NOTE_MAX_MS);
+    if (onset > pos_ms) out.push_back({0, onset - pos_ms});
+    out.push_back({hz, dur});
+    pos_ms = onset + dur;
+  }
+  out.push_back({0, PATTERN_GAP_MS});
+}
+
+// The button: every cached pattern in turn, each after a cue and at its own pitch and timing, so people can
+// practise them. Another press stops it. The mic is off meanwhile (it shares I2S0 with the speaker).
+void play_patterns() {
+  patterns_refresh = true;
+  const String text = patterns_get();
+  std::vector<Tone> tones;
+  for (int a = 0; a < int(text.length());) {
+    int b = text.indexOf('\n', a);
+    if (b < 0) b = text.length();
+    if (b > a) add_pattern_tones(text.substring(a, b).c_str(), tones);
+    a = b + 1;
+  }
+  if (tones.empty()) {
+    Serial.println("patterns: none cached");
+    no_patterns_until_ms = millis() + 1500;  // amber LED, no sound
+    return;
+  }
+  Serial.printf("patterns: playing %u tones\n", unsigned(tones.size()));
+  neopixelWrite(PIN_LED, 40, 40, 40);
+  i2s_driver_uninstall(MIC_PORT);
+  stop_armed = false;  // the press that started this doesn't stop it
+  play_tones(tones.data(), tones.size(), stop_requested);
+  audio_ok = resume_mic();
+  last_read = millis();
+  Serial.printf("patterns: done%s\n", audio_ok ? "" : ", mic did not restart");
+}
+
 void led_update(float level_dbfs) {
   const uint32_t now = millis();
   const int res = led_result.load();
-  if (digitalRead(PIN_BUTTON) == LOW || now < identify_until_ms) neopixelWrite(PIN_LED, 40, 40, 40);
+  if (button_down() || now < identify_until_ms) neopixelWrite(PIN_LED, 40, 40, 40);
+  else if (now < no_patterns_until_ms) neopixelWrite(PIN_LED, 40, 30, 0);
   else if (res && now - led_result_ms.load() < 1500) neopixelWrite(PIN_LED, res < 0 ? 64 : 0, res > 0 ? 64 : 0, 0);
   else if (uploading) neopixelWrite(PIN_LED, 40, 30, 0);
   else {
@@ -609,6 +758,7 @@ void setup() {
 void loop() {
   net_poll();
   if (ha::identify_requested.exchange(false)) identify();
+  if (audio_ok && button_pressed()) play_patterns();
   if (!audio_ok) {  // keep OTA alive and show the fault
     neopixelWrite(PIN_LED, millis() / 500 % 2 ? 64 : 0, 0, 0);
     delay(10);

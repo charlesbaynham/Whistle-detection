@@ -9,6 +9,13 @@ upload is silent (red LED only). The mic is off for that ~0.7 s. With MQTT, a de
 `feedback` (docs/mqtt.md): rising = `ok`, two flat + amber = `no_action` (no automation for that pattern),
 silent = `dup` (a louder room took it), silent + red LED = no answer within 2.5 s.
 
+Button: a press plays back every registered pattern (a label with ≥2 recordings in the server's `default`
+dataset) at its own pitch and rhythm, each after a short 700 Hz cue, so people can hear and practise them.
+Another press stops it. The list comes from `GET /api/device/patterns` (plain text, one pattern per line,
+`label hz:ms:onset_ms ...`), is fetched at boot, every 10 min and after each press, and cached in NVS (namespace
+`pat`), so the button works with the server down. No cache: amber LED, no sound. The mic is off during playback.
+Needs `debug_server`.
+
 LED: blue at boot, then blue brightness = mic level. Amber while a clip uploads, then 1.5 s green
 (server detected a pattern) or red (rejected, or upload failed). White while the button is held,
 magenta during OTA.

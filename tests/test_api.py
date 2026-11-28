@@ -106,6 +106,20 @@ def test_detect(client):
     assert not scale["detected"] and all(c["rho"] < 90 for c in scale["candidates"] if c["veto"] is None)
 
 
+def test_device_patterns(client):
+    assert client.get("/api/device/patterns?dataset=pats").status_code == 404
+    for i, (label, f) in enumerate([("up", UP), ("up", UP), ("noise", [])]):
+        client.post("/api/recordings", files={"audio": ("a.wav", tune_wav([x * (1 + 0.03 * i) for x in f], seed=i))},
+                    data={"dataset": "pats", "label": label})
+    r = client.get("/api/device/patterns?dataset=pats")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain")
+    (line,) = r.text.splitlines()
+    label, *notes = line.split()
+    hz, dur, onset = zip(*(map(int, n.split(":")) for n in notes))
+    assert label == "up" and len(notes) == 3 and onset[0] == 0
+    assert hz[0] < hz[1] > hz[2] and 900 < hz[0] < 1200 and all(200 < d < 500 for d in dur)
+
+
 def test_device_trigger_without_templates(client, tmp_path):
     r = client.post("/api/device/trigger", files={"audio": ("t.wav", wav_bytes(sr=16000, dur=1.0))},
                     data={"meta": '{"host": "echo", "notes": [[0.1, 0.3, 1500.0]]}'})
